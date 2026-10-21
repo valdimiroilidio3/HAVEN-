@@ -130,6 +130,8 @@ export default async function PropertyPage({ params }: { params: Promise<{ slug:
                 <ul className="mt-2 flex flex-wrap gap-1.5">
                   {[
                     "Private walled plot",
+                    "Residents' lagoon, pavilion and sun deck",
+                    "Sports park: football, basketball and futsal courts",
                     pool ? "Private pool and deck" : "Landscaped private garden",
                     "Equipped kitchen: fridge, induction hob, oven, extractor, dishwasher, microwave",
                     "Laundry: washer / dryer",

@@ -8,7 +8,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
-import { ArrowRight, CalendarDays, CarFront, Layers, Maximize2, Moon, RotateCcw, RotateCw, Sparkles, Sun, X, Boxes, Info, Waves } from "lucide-react";
+import { ArrowRight, CalendarDays, CarFront, Layers, Maximize2, Moon, RotateCcw, RotateCw, Sparkles, Sun, Trophy, X, Boxes, Info, Waves } from "lucide-react";
 import type { AppSettings, Property, PropertyMedia, PropertyPosition, PropertyStatus, Typology } from "@/lib/domain/types";
 import { PROPERTY_STATUS_LABELS, TYPOLOGIES, TYPOLOGY_CATALOGUE } from "@/lib/domain/constants";
 import { formatArea, formatCurrency, typologyHeadline } from "@/lib/format";
@@ -81,8 +81,9 @@ function CameraRig({
     update: () => void;
     enabled: boolean;
   }) | null;
-  const destination = React.useRef(new THREE.Vector3(70, 58, 100));
-  const lookAt = React.useRef(new THREE.Vector3(0, 2, 4));
+  // Overview framing for the full site: west sports park to east row, gate in front.
+  const destination = React.useRef(new THREE.Vector3(96, 74, 132));
+  const lookAt = React.useRef(new THREE.Vector3(-13, 2, 7));
   const animating = React.useRef(false);
   const orbit = React.useRef<{
     center: THREE.Vector3;
@@ -104,10 +105,10 @@ function CameraRig({
     if (mode === "plan") {
       orbit.current = null;
       if (controls) controls.enabled = true;
-      const centerX = focus?.x ?? 0;
-      const centerZ = focus?.z ?? 4;
+      const centerX = focus?.x ?? -13;
+      const centerZ = focus?.z ?? 7;
       lookAt.current.set(centerX, 0, centerZ);
-      destination.current.set(centerX, 98, centerZ + 0.01);
+      destination.current.set(centerX, focus ? 96 : 132, centerZ + 0.01);
     } else if (focus) {
       const size = focus.size;
       const distance = 13 + size * 5.2;
@@ -136,8 +137,8 @@ function CameraRig({
     } else {
       orbit.current = null;
       if (controls) controls.enabled = true;
-      lookAt.current.set(0, 2, 4);
-      destination.current.set(70, 58, 100);
+      lookAt.current.set(-13, 2, 7);
+      destination.current.set(96, 74, 132);
     }
     animating.current = true;
   }, [focus, mode, resetToken, orbitToken, camera, controls]);
@@ -374,12 +375,12 @@ export function CondominiumExperience({ entries, settings, isAdmin = false, clas
               makeDefault
               enableDamping
               dampingFactor={0.055}
-              minDistance={mode === "plan" ? 30 : 12}
-              maxDistance={mode === "plan" ? 130 : 190}
+              minDistance={mode === "plan" ? 30 : 10}
+              maxDistance={mode === "plan" ? 200 : 260}
               maxPolarAngle={mode === "plan" ? 0.06 : Math.PI * 0.47}
               minPolarAngle={0.12}
               enableRotate={mode === "site"}
-              target={[0, 2, 4]}
+              target={[-13, 2, 7]}
               zoomSpeed={0.8}
               panSpeed={0.7}
             />
@@ -567,7 +568,7 @@ export function CondominiumExperience({ entries, settings, isAdmin = false, clas
 
         <div className="flex items-center justify-between gap-4 text-[0.62rem] text-ink-500">
           <p className="max-w-md leading-relaxed">
-            Demonstration data · Prototype 3D · Click a house for a 360° walk-around · drag to orbit, scroll to zoom.
+            Demonstration data · Prototype 3D · Click a house for a 360° walk-around · the sports park sits west, the lagoon in the centre · drag to orbit, scroll to zoom.
           </p>
           <p className="hidden shrink-0 items-center gap-1.5 sm:flex">
             <Info className="h-3 w-3" aria-hidden />
@@ -694,6 +695,12 @@ export function CondominiumExperience({ entries, settings, isAdmin = false, clas
                     <span className="inline-flex items-center gap-1 rounded-full border border-ink-900/12 bg-white/70 px-2.5 py-1 text-[0.66rem] text-ink-600">
                       <CarFront className="h-3 w-3" aria-hidden />
                       {selected.typology === "T3" || selected.typology === "T4" ? "Double carport" : "Private carport"}
+                    </span>
+                    <span className="inline-flex items-center gap-1 rounded-full border border-ink-900/12 bg-white/70 px-2.5 py-1 text-[0.66rem] text-ink-600">
+                      <Trophy className="h-3 w-3" aria-hidden /> 2 min walk to the sports park
+                    </span>
+                    <span className="inline-flex items-center gap-1 rounded-full border border-ink-900/12 bg-white/70 px-2.5 py-1 text-[0.66rem] text-ink-600">
+                      <Waves className="h-3 w-3" aria-hidden /> Shared lagoon and pavilion
                     </span>
                   </div>
                   <div className="mt-4 flex flex-wrap gap-1.5">

@@ -30,6 +30,16 @@ export interface HavenMaterials {
   poolLight: THREE.MeshStandardMaterial;
   /** Aqua mosaic used inside the pool basin. */
   poolTile: THREE.MeshStandardMaterial;
+  /** Sports park surfaces and fences. */
+  pitch: THREE.MeshStandardMaterial;
+  courtClay: THREE.MeshStandardMaterial;
+  courtLine: THREE.MeshStandardMaterial;
+  fence: THREE.MeshStandardMaterial;
+  net: THREE.MeshStandardMaterial;
+  park: THREE.MeshStandardMaterial;
+  flowers: THREE.MeshStandardMaterial;
+  /** Deep lagoon water, clearer and greener than a private pool. */
+  poolWater: THREE.MeshStandardMaterial;
   /** Car paint variants for the parking bays. */
   carPaint: THREE.MeshStandardMaterial[];
   carGlass: THREE.MeshStandardMaterial;
@@ -141,6 +151,36 @@ export function getMaterials(): HavenMaterials {
       roughness: 0.26,
       metalness: 0.06,
       envMapIntensity: 1.15,
+    }),
+    pitch: standard({ map: grassMap, color: new THREE.Color("#5f9a5c"), roughness: 0.94 }),
+    courtClay: standard({ map: concreteMap, color: new THREE.Color("#a85f43"), roughness: 0.88 }),
+    courtLine: standard({ color: new THREE.Color("#f4f6f3"), roughness: 0.6, emissive: new THREE.Color("#22301f"), emissiveIntensity: 0.05 }),
+    fence: standard({
+      color: new THREE.Color("#2c3230"),
+      roughness: 0.7,
+      metalness: 0.2,
+      transparent: true,
+      opacity: 0.26,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    }),
+    net: standard({
+      color: new THREE.Color("#e8ece8"),
+      roughness: 0.9,
+      transparent: true,
+      opacity: 0.24,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    }),
+    park: standard({ map: grassMap, color: new THREE.Color("#7f9a68"), roughness: 1 }),
+    flowers: standard({ color: new THREE.Color("#ffffff"), roughness: 0.85, emissive: new THREE.Color("#3a2233"), emissiveIntensity: 0.12 }),
+    poolWater: standard({
+      color: new THREE.Color("#3f96a8"),
+      roughness: 0.05,
+      metalness: 0.45,
+      transparent: true,
+      opacity: 0.94,
+      envMapIntensity: 1.45,
     }),
     carPaint: [
       standard({ color: new THREE.Color("#ecebe6"), roughness: 0.26, metalness: 0.42, envMapIntensity: 1.3 }),

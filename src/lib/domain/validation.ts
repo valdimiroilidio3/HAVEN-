@@ -173,7 +173,13 @@ export const visitUpdateSchema = z.object({
 
 /* ── Scene ────────────────────────────────────────────────────────────── */
 
-export const SITE_BOUNDS = { minX: -48, maxX: 48, minZ: -44, maxZ: 46 } as const;
+/**
+ * Legal placement area for a house origin, in metres. Kept in the domain layer
+ * because it is enforced by the placement schema and the repositories; the 3D
+ * masterplan derives its perimeter fence from the same numbers so the editor,
+ * the API and the rendered scene can never drift apart.
+ */
+export const SITE_BOUNDS = { minX: -100, maxX: 74, minZ: -66, maxZ: 80 } as const;
 
 export const placementSchema = z.object({
   items: z

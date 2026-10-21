@@ -6,6 +6,7 @@ import { Environment, Lightformer, Sky, Stars } from "@react-three/drei";
 import { useThree } from "@react-three/fiber";
 import { getMaterials } from "./materials";
 import { HouseExterior } from "./HouseExterior";
+import { SportsPark } from "./SportsPark";
 import { buildCanopies, canopyTint, POOL_COLORS } from "./vegetation";
 import {
   drivewayFor,
@@ -18,7 +19,10 @@ import {
   poolKeepOut,
   scatterShrubs,
   scatterTrees,
+  PLANTING_BEDS,
   SITE,
+  scatterFlowers,
+  sportsKeepOut,
   type GarageSpec,
   type PoolSpec,
   type TreeKind,
@@ -69,35 +73,54 @@ function Roads() {
     const hole = new THREE.Path();
     roundedRectPath(hole, inner.maxX - inner.minX, inner.maxZ - inner.minZ, inner.radius, (inner.minX + inner.maxX) / 2, (inner.minZ + inner.maxZ) / 2, true);
     shape.holes.push(hole);
-    return new THREE.ShapeGeometry(shape, 16);
+    return new THREE.ShapeGeometry(shape, 18);
   }, []);
   React.useEffect(() => () => ringGeometry.dispose(), [ringGeometry]);
 
+  const boulevard = SITE.boulevard;
+  const service = SITE.serviceRoad;
+  // Kerb strips along the two straight roads keep the grass edge crisp.
+  const kerbs = [
+    { x: boulevard.minX - 0.9, z: (boulevard.minZ + boulevard.maxZ) / 2, w: 1.8, d: boulevard.maxZ - boulevard.minZ },
+    { x: boulevard.maxX + 0.9, z: (boulevard.minZ + boulevard.maxZ) / 2, w: 1.8, d: boulevard.maxZ - boulevard.minZ },
+    { x: (service.minX + service.maxX) / 2, z: service.minZ - 0.9, w: service.maxX - service.minX, d: 1.8 },
+    { x: (service.minX + service.maxX) / 2, z: service.maxZ + 0.9, w: service.maxX - service.minX, d: 1.8 },
+  ];
+
   return (
     <group>
+      {kerbs.map((kerb, index) => (
+        <mesh key={index} rotation={[-Math.PI / 2, 0, 0]} position={[kerb.x, 0.036, kerb.z]} material={m.stone} receiveShadow>
+          <planeGeometry args={[kerb.w, kerb.d]} />
+        </mesh>
+      ))}
       <mesh geometry={ringGeometry} material={m.asphalt} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.045, 0]} receiveShadow />
       <mesh
         rotation={[-Math.PI / 2, 0, 0]}
-        position={[(SITE.entrance.minX + SITE.entrance.maxX) / 2, 0.045, (SITE.entrance.minZ + SITE.entrance.maxZ) / 2]}
+        position={[(boulevard.minX + boulevard.maxX) / 2, 0.045, (boulevard.minZ + boulevard.maxZ) / 2]}
         material={m.asphalt}
         receiveShadow
       >
-        <planeGeometry args={[SITE.entrance.maxX - SITE.entrance.minX, SITE.entrance.maxZ - SITE.entrance.minZ]} />
+        <planeGeometry args={[boulevard.maxX - boulevard.minX, boulevard.maxZ - boulevard.minZ]} />
       </mesh>
-      {/* central plaza + garden paths */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[SITE.centralPlaza.x, 0.05, SITE.centralPlaza.z]} material={m.gravel} receiveShadow>
-        <circleGeometry args={[SITE.centralPlaza.radius, 48]} />
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[(service.minX + service.maxX) / 2, 0.045, (service.minZ + service.maxZ) / 2]}
+        material={m.asphalt}
+        receiveShadow
+      >
+        <planeGeometry args={[service.maxX - service.minX, service.maxZ - service.minZ]} />
       </mesh>
-      {[
-        { x: 0, z: (SITE.ring.inner.minZ + SITE.centralPlaza.z - SITE.centralPlaza.radius) / 2 - 0.2, w: 2.2, d: Math.abs(SITE.ring.inner.minZ - (SITE.centralPlaza.z - SITE.centralPlaza.radius)) + 0.4 },
-        { x: 0, z: (SITE.ring.inner.maxZ + SITE.centralPlaza.z + SITE.centralPlaza.radius) / 2, w: 2.2, d: Math.abs(SITE.ring.inner.maxZ - (SITE.centralPlaza.z + SITE.centralPlaza.radius)) + 0.4 },
-        { x: (SITE.ring.inner.minX + SITE.centralPlaza.x - SITE.centralPlaza.radius) / 2, z: SITE.centralPlaza.z, w: Math.abs(SITE.ring.inner.minX - (SITE.centralPlaza.x - SITE.centralPlaza.radius)) + 0.4, d: 2.2 },
-        { x: (SITE.ring.inner.maxX + SITE.centralPlaza.x + SITE.centralPlaza.radius) / 2, z: SITE.centralPlaza.z, w: Math.abs(SITE.ring.inner.maxX - (SITE.centralPlaza.x + SITE.centralPlaza.radius)) + 0.4, d: 2.2 },
-      ].map((path, i) => (
-        <mesh key={i} rotation={[-Math.PI / 2, 0, 0]} position={[path.x, 0.052, path.z]} material={m.gravel} receiveShadow>
-          <planeGeometry args={[Math.max(path.w, 0.5), Math.max(path.d, 0.5)]} />
+      {/* centre line + kerb markings on the boulevard */}
+      {Array.from({ length: 14 }).map((_, index) => (
+        <mesh key={index} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.048, 46 + index * 2.4]} material={m.courtLine}>
+          <planeGeometry args={[0.16, 1.1]} />
         </mesh>
       ))}
+      {/* low stone kerb ring around the lagoon deck */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[SITE.lagoon.x, 0.03, SITE.lagoon.z]} material={m.lawn} receiveShadow>
+        <circleGeometry args={[SITE.lagoon.radiusX + SITE.lagoon.deck + 2.4, 64]} />
+      </mesh>
     </group>
   );
 }
@@ -160,9 +183,9 @@ function Trees({
     });
     return scatterTrees({
       houses: entries.map((e) => ({ position: e.position, typology: e.property.typology, rotationY: e.rotationY })),
-      count: lowQuality ? 55 : 120,
+      count: lowQuality ? 54 : 96,
       seed: 20261021,
-      keepOut,
+      keepOut: [...keepOut, ...sportsKeepOut()],
     });
   }, [entries, plots, lowQuality]);
 
@@ -615,6 +638,175 @@ function Plot({
   );
 }
 
+/* ── Condominium lagoon ───────────────────────────────────────────────── */
+
+function Lagoon({ night, lowQuality }: { night: boolean; lowQuality: boolean }) {
+  const m = getMaterials();
+  const { x, z, radiusX, radiusZ, deck } = SITE.lagoon;
+  const water = night ? m.waterNight : m.poolWater;
+  const colors = night ? POOL_COLORS.night : POOL_COLORS.day;
+  return (
+    <group position={[x, 0, z]}>
+      {/* stone deck: one ellipse under the water, so the rim reads as coping */}
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, 0.07, 0]}
+        scale={[radiusX + deck, radiusZ + deck, 1]}
+        material={m.stone}
+        receiveShadow
+      />
+      {/* basin: mosaic walls just under the rim */}
+      <mesh position={[0, -0.34, 0]} scale={[radiusX + 0.22, 1, radiusZ + 0.22]} material={m.poolTile}>
+        <cylinderGeometry args={[1, 1, 0.9, 96, 1, true]} />
+      </mesh>
+      <mesh position={[0, -0.36, 0]} scale={[radiusX, 1, radiusZ]} rotation={[-Math.PI / 2, 0, 0]} material={m.poolTile} receiveShadow>
+        <circleGeometry args={[1, 96]} />
+      </mesh>
+      {/* water */}
+      <mesh position={[0, 0.12, 0]} scale={[radiusX - 0.15, 1, radiusZ - 0.15]} rotation={[-Math.PI / 2, 0, 0]} material={water}>
+        <circleGeometry args={[1, 96]} />
+      </mesh>
+      {/* stone steps down to the water on the south side */}
+      {[0, 1, 2, 3].map((step) => (
+        <mesh
+          key={step}
+          position={[0, -0.09 - step * 0.09, radiusZ + 0.5 - step * 0.28]}
+          material={m.concrete}
+          receiveShadow
+          castShadow
+        >
+          <boxGeometry args={[4.6, 0.1, 0.32]} />
+        </mesh>
+      ))}
+      {/* sun-lounger row along the west rim, like a resort deck */}
+      {!lowQuality &&
+        [-3.4, -1.1, 1.2, 3.5, 5.8].map((offset, index) => (
+          <Lounger key={offset} position={[-(radiusX + deck * 0.55), 0.08, offset + index * 0.1]} rotation={Math.PI / 2} />
+        ))}
+      {!lowQuality && <Parasol position={[-(radiusX + deck * 0.9), 0.08, -6.2]} />}
+      {!lowQuality && <Parasol position={[-6, 0.08, -(radiusZ + deck * 0.62)]} />}
+      {/* pavilion at the north end of the deck */}
+      <group position={[SITE.pavilion.x, 0, SITE.pavilion.z]}>
+        <mesh position={[0, 0.12, 0]} material={m.concrete} receiveShadow castShadow>
+          <boxGeometry args={[SITE.pavilion.width + 1.6, 0.24, SITE.pavilion.depth + 2]} />
+        </mesh>
+        {[-1, 1].map((side) => (
+          <mesh key={side} position={[(side * (SITE.pavilion.width - 0.8)) / 2, 1.85, 0]} material={m.timber} castShadow>
+            <boxGeometry args={[0.18, 3.7, SITE.pavilion.depth - 0.6]} />
+          </mesh>
+        ))}
+        {[-1, 1].map((side) => (
+          <mesh key={`col-${side}`} position={[(side * (SITE.pavilion.width - 0.8)) / 2, 1.85, (SITE.pavilion.depth - 0.9) / 2]} material={m.timber} castShadow>
+            <boxGeometry args={[0.16, 3.7, 0.16]} />
+          </mesh>
+        ))}
+        <mesh position={[0, 3.82, 0]} material={m.timberDark} castShadow receiveShadow>
+          <boxGeometry args={[SITE.pavilion.width + 1.5, 0.18, SITE.pavilion.depth + 1.6]} />
+        </mesh>
+        {Array.from({ length: 13 }).map((_, index) => (
+          <mesh
+            key={index}
+            position={[-SITE.pavilion.width / 2 + 0.6 + index * ((SITE.pavilion.width - 1.2) / 12), 3.94, 0]}
+            material={m.timber}
+            castShadow
+          >
+            <boxGeometry args={[0.18, 0.12, SITE.pavilion.depth + 1.7]} />
+          </mesh>
+        ))}
+        {night && <pointLight position={[0, 3.4, 0]} intensity={4} distance={16} decay={2} color="#ffcf9a" />}
+      </group>
+      {night && (
+        <>
+          <pointLight position={[0, 0.8, 0]} intensity={7} distance={30} decay={2} color={colors.water} />
+          <mesh position={[0, 0.16, 0]} scale={[radiusX - 0.2, 1, radiusZ - 0.2]} rotation={[-Math.PI / 2, 0, 0]} material={m.poolLight}>
+            <ringGeometry args={[0.86, 0.88, 96]} />
+          </mesh>
+        </>
+      )}
+    </group>
+  );
+}
+
+/* ── Flower borders ───────────────────────────────────────────────────── */
+
+function Flowers({ lowQuality }: { lowQuality: boolean }) {
+  const m = getMaterials();
+  const ref = React.useRef<THREE.InstancedMesh>(null);
+  const flowers = React.useMemo(() => scatterFlowers().slice(0, lowQuality ? 90 : 220), [lowQuality]);
+  const tones = React.useMemo(
+    () => ["#e8a0a6", "#f0d08a", "#d9d2f0"].map((tone) => new THREE.Color(tone)),
+    [],
+  );
+  React.useLayoutEffect(() => {
+    if (!ref.current) return;
+    const matrix = new THREE.Matrix4();
+    flowers.forEach((flower, index) => {
+      matrix.compose(
+        new THREE.Vector3(flower.x, 0.18 * flower.scale, flower.z),
+        new THREE.Quaternion(),
+        new THREE.Vector3(flower.scale, flower.scale, flower.scale),
+      );
+      ref.current!.setMatrixAt(index, matrix);
+      ref.current!.setColorAt(index, tones[flower.tone]!);
+    });
+    ref.current.count = flowers.length;
+    ref.current.instanceMatrix.needsUpdate = true;
+    if (ref.current.instanceColor) ref.current.instanceColor.needsUpdate = true;
+  }, [flowers, tones]);
+  const geometry = React.useMemo(() => new THREE.IcosahedronGeometry(0.34, 0), []);
+  React.useEffect(() => () => geometry.dispose(), [geometry]);
+  return <instancedMesh ref={ref} args={[geometry, m.flowers, Math.max(1, flowers.length)]} castShadow frustumCulled={false} />;
+}
+
+/** Low clipped hedge outlining every planting bed, so beds read as designed. */
+function BedBorders({ lowQuality }: { lowQuality: boolean }) {
+  const m = getMaterials();
+  const segments = React.useMemo(() => {
+    const out: Array<{ x: number; z: number; w: number; d: number }> = [];
+    for (const bed of PLANTING_BEDS) {
+      const h = 0.42;
+      out.push({ x: (bed.minX + bed.maxX) / 2, z: bed.minZ, w: bed.maxX - bed.minX, d: h });
+      out.push({ x: (bed.minX + bed.maxX) / 2, z: bed.maxZ, w: bed.maxX - bed.minX, d: h });
+      out.push({ x: bed.minX, z: (bed.minZ + bed.maxZ) / 2, w: h, d: bed.maxZ - bed.minZ });
+      out.push({ x: bed.maxX, z: (bed.minZ + bed.maxZ) / 2, w: h, d: bed.maxZ - bed.minZ });
+    }
+    return out;
+  }, []);
+  return (
+    <group>
+      {segments.map((segment, index) => (
+        <mesh key={index} position={[segment.x, 0.32, segment.z]} material={m.hedge} receiveShadow castShadow>
+          <boxGeometry args={[segment.w, 0.64, segment.d]} />
+        </mesh>
+      ))}
+      {!lowQuality && <ShrubBorder />}
+    </group>
+  );
+}
+
+/** Occasional taller shrubs along the bed edges break the hedge outline. */
+function ShrubBorder() {
+  const m = getMaterials();
+  const positions = React.useMemo(() => {
+    const out: Array<{ x: number; z: number }> = [];
+    for (const bed of PLANTING_BEDS) {
+      const step = 9;
+      for (let x = bed.minX + step / 2; x < bed.maxX; x += step) out.push({ x, z: bed.minZ + 0.6 });
+      for (let z = bed.minZ + step / 2; z < bed.maxZ; z += step) out.push({ x: bed.maxX - 0.6, z });
+    }
+    return out.slice(0, 90);
+  }, []);
+  return (
+    <group>
+      {positions.map((position, index) => (
+        <mesh key={index} position={[position.x, 0.75, position.z]} material={m.hedge} castShadow>
+          <icosahedronGeometry args={[0.85, 1]} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
 function StreetLamps({ night, lowQuality }: { night: boolean; lowQuality: boolean }) {
   const m = getMaterials();
   const lamps = React.useMemo(() => lampPositions(), []);
@@ -733,7 +925,7 @@ export interface SceneTheme {
 export const THEMES: Record<TimeOfDay, SceneTheme> = {
   day: {
     background: "#cfd6d1",
-    fog: ["#cfd6d1", 120, 340],
+    fog: ["#cfd6d1", 180, 460],
     ambient: 0.3,
     hemisphere: 0.72,
     sun: SUN_POSITION,
@@ -743,7 +935,7 @@ export const THEMES: Record<TimeOfDay, SceneTheme> = {
   },
   night: {
     background: "#0b1016",
-    fog: ["#0b1016", 95, 300],
+    fog: ["#0b1016", 150, 400],
     ambient: 0.14,
     hemisphere: 0.22,
     sun: MOON_POSITION,
@@ -774,14 +966,14 @@ function Lighting({ lowQuality, time }: { lowQuality: boolean; time: TimeOfDay }
         intensity={theme.sunIntensity}
         color={theme.sunColor}
         castShadow
-        shadow-mapSize-width={lowQuality ? 1024 : 2048}
-        shadow-mapSize-height={lowQuality ? 1024 : 2048}
-        shadow-camera-left={-62}
-        shadow-camera-right={62}
-        shadow-camera-top={58}
-        shadow-camera-bottom={-58}
+        shadow-mapSize-width={lowQuality ? 1024 : 3072}
+        shadow-mapSize-height={lowQuality ? 1024 : 3072}
+        shadow-camera-left={-118}
+        shadow-camera-right={112}
+        shadow-camera-top={96}
+        shadow-camera-bottom={-92}
         shadow-camera-near={1}
-        shadow-camera-far={260}
+        shadow-camera-far={420}
         shadow-bias={-0.0004}
         shadow-normalBias={0.04}
       />
@@ -872,18 +1064,19 @@ export function SiteScene({
       <Lighting lowQuality={lowQuality} time={timeOfDay} />
 
       {/* ground */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 2]} material={m.grass} receiveShadow>
-        <planeGeometry args={[220, 200, 1, 1]} />
-      </mesh>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.004, 4]} material={m.lawn} receiveShadow>
-        <circleGeometry args={[15, 64]} />
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[SITE.center.x, 0, SITE.center.z]} material={m.grass} receiveShadow>
+        <planeGeometry args={[300, 280, 1, 1]} />
       </mesh>
 
       <Roads />
       <Driveways entries={entries} plots={plots} />
+      <BedBorders lowQuality={lowQuality} />
       <Trees entries={entries} plots={plots} lowQuality={lowQuality} night={night} />
       <Shrubs entries={entries} lowQuality={lowQuality} />
+      <Flowers lowQuality={lowQuality} />
       <StreetLamps night={night} lowQuality={lowQuality} />
+      <Lagoon night={night} lowQuality={lowQuality} />
+      <SportsPark night={night} lowQuality={lowQuality} />
       <Boundary />
 
       {entries.map((entry, index) => (

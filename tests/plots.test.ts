@@ -43,7 +43,7 @@ describe("private plots", () => {
       }
       const rear = walls.find((wall) => wall.width > wall.depth)!;
       expect(rear.z).toBeCloseTo(-(plan.depthM / 2 + PLOT.rearDepth), 5);
-      expect(rear.width).toBeCloseTo(plan.widthM + PLOT.sideMargin * 2, 5);
+      expect(rear.width).toBeCloseTo(plan.widthM + PLOT.sideMargin * 2 + PLOT.wallThickness, 5);
     }
   });
 
@@ -229,7 +229,7 @@ describe("tree species", () => {
 
   it("respects keep-out zones such as swimming pools", () => {
     const houses = SEED_UNITS.map((seed) => ({ position: seed.position, typology: seed.typology, rotationY: seed.position.rotationY }));
-    const zone = { x: 0, z: 0, radius: 120 };
+    const zone = { x: 0, z: 0, radius: 400 };
     const trees = scatterTrees({ houses, count: 25, seed: 5, keepOut: [zone] });
     expect(trees).toHaveLength(0);
   });

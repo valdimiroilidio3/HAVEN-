@@ -17,6 +17,8 @@ import {
 import { PROPERTY_STATUS_LABELS, TYPOLOGY_CATALOGUE } from "@/lib/domain/constants";
 import type { PropertyStatus, PublicationStatus, Typology } from "@/lib/domain/types";
 import { cn } from "@/lib/utils";
+import { SITE } from "@/lib/3d/site";
+import { SITE_BOUNDS } from "@/lib/domain/validation";
 
 export interface EditorProperty {
   id: string;
@@ -40,8 +42,10 @@ interface Placement {
   rotationY: number;
 }
 
-const SITE_HALF_W = 48;
-const SITE_HALF_D = 46;
+// The editor edits the same site the public scene renders, so the bounds come
+// from the domain constants rather than a second hard-coded copy.
+const SITE_HALF_W = Math.max(Math.abs(SITE_BOUNDS.minX), Math.abs(SITE_BOUNDS.maxX));
+const SITE_HALF_D = Math.max(Math.abs(SITE_BOUNDS.minZ), Math.abs(SITE_BOUNDS.maxZ));
 const HOUSE_COLORS: Record<Typology, string> = { T1: "#d9d3c4", T2: "#c9c0ab", T3: "#bdb4a1", T4: "#a9a08c" };
 const FOOTPRINT: Record<Typology, { w: number; d: number; h: number }> = {
   T1: { w: 7.6, d: 9.2, h: 3.35 },
@@ -224,7 +228,7 @@ export function SceneEditor({
           </p>
         </div>
         <div className="relative aspect-[4/3] w-full sm:aspect-[16/10]">
-          <Canvas shadows dpr={[1, 1.6]} camera={view === "plan" ? { position: [0, 118, 0.1], fov: 34 } : { position: [58, 52, 84], fov: 38 }}>
+          <Canvas shadows dpr={[1, 1.6]} camera={view === "plan" ? { position: [0, 168, 0.1], fov: 34 } : { position: [96, 74, 128], fov: 38 }}>
             <color attach="background" args={["#e9e6dd"]} />
             <fog attach="fog" args={["#e9e6dd", 120, 260]} />
             <hemisphereLight args={["#f4efe2", "#8d8d7a", 0.85]} />
@@ -487,17 +491,38 @@ function EditorScene({
         <meshStandardMaterial color="#a9b092" roughness={1} />
       </mesh>
 
-      <gridHelper args={[128, 32, "#8c9179", "#9aa08a"]} position={[0, 0.02, 0]} />
+      <gridHelper args={[SITE_HALF_W * 2, 32, "#8c9179", "#9aa08a"]} position={[0, 0.02, 0]} />
 
-      {/* Ring road + plaza, simplified from the site layout */}
-      <mesh rotation-x={-Math.PI / 2} position={[0, 0.03, 0]}>
-        <ringGeometry args={[31, 36, 64]} />
-        <meshStandardMaterial color="#b9b4a6" roughness={0.95} />
-      </mesh>
-      <mesh rotation-x={-Math.PI / 2} position={[0, 0.04, 4]}>
-        <circleGeometry args={[7, 48]} />
-        <meshStandardMaterial color="#c9c2b1" roughness={0.9} />
-      </mesh>
+      {/* Circuit road + lagoon, simplified from the site layout */}
+      {(() => {
+        const { outer, inner } = SITE.ring;
+        const w = outer.maxX - outer.minX;
+        const d = outer.maxZ - outer.minZ;
+        return (
+          <>
+            <mesh rotation-x={-Math.PI / 2} position={[(outer.minX + outer.maxX) / 2, 0.03, (outer.minZ + outer.maxZ) / 2]}>
+              <planeGeometry args={[w, d]} />
+              <meshStandardMaterial color="#b9b4a6" roughness={0.95} />
+            </mesh>
+            <mesh rotation-x={-Math.PI / 2} position={[(inner.minX + inner.maxX) / 2, 0.035, (inner.minZ + inner.maxZ) / 2]}>
+              <planeGeometry args={[inner.maxX - inner.minX, inner.maxZ - inner.minZ]} />
+              <meshStandardMaterial color="#a9b092" roughness={1} />
+            </mesh>
+            <mesh rotation-x={-Math.PI / 2} position={[(SITE.boulevard.minX + SITE.boulevard.maxX) / 2, 0.03, (SITE.boulevard.minZ + SITE.boulevard.maxZ) / 2]}>
+              <planeGeometry args={[SITE.boulevard.maxX - SITE.boulevard.minX, SITE.boulevard.maxZ - SITE.boulevard.minZ]} />
+              <meshStandardMaterial color="#b9b4a6" roughness={0.95} />
+            </mesh>
+            <mesh rotation-x={-Math.PI / 2} position={[SITE.lagoon.x, 0.04, SITE.lagoon.z]} scale={[SITE.lagoon.radiusX, SITE.lagoon.radiusZ, 1]}>
+              <circleGeometry args={[1, 64]} />
+              <meshStandardMaterial color="#5aa8bd" roughness={0.2} metalness={0.35} />
+            </mesh>
+            <mesh rotation-x={-Math.PI / 2} position={[SITE.sportsPark.minX + 14, 0.033, (SITE.sportsPark.minZ + SITE.sportsPark.maxZ) / 2]}>
+              <planeGeometry args={[26, 100]} />
+              <meshStandardMaterial color="#7d8f68" roughness={1} />
+            </mesh>
+          </>
+        );
+      })()}
 
       {properties.map((property) => {
         const placement = draft[property.id];

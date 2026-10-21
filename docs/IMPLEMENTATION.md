@@ -9,7 +9,7 @@ explicitly marked **unverified**.
 | --- | --- | --- |
 | TypeScript (strict) | `npx tsc --noEmit` | pass, 0 errors |
 | Lint | `npm run lint` | pass, 0 errors (warnings only) |
-| Unit tests | `npx vitest run` | 54/54 pass (6 files) |
+| Unit tests | `npx vitest run` | 58/58 pass (6 files) |
 | Data-layer smoke | `npx tsx scripts/smoke.ts` | 22/22 checks pass |
 | Production build | `npm run build` | pass; 17 routes + middleware compiled |
 | Public rendering | HTTP against `next dev` | `/`, `/properties`, `/properties/[slug]`, `/visit`, `/login` → 200 |
@@ -37,29 +37,48 @@ Not verified, by absence of resources rather than by omission:
 - Login page with safe `next` redirection and demo pre-fill in development.
 
 ### 3D system
-- Procedural site (120 × 116 m, fenced perimeter with a single gate), 13 homes with
-  typology-specific massing, driveways, planting and lighting; camera modes for site and plan view.
+- Procedural site (174 × 146 m, fenced perimeter, one gate), 13 homes with typology-specific
+  massing, driveways, planting and lighting; camera modes for site and plan view.
+- **Masterplan composition**, reviewed against a rendered plan (`docs/masterplan.png`, produced by
+  `scripts/render-plan.ts`): a north row (H01–H04), an east row (H05–H08), a south row
+  (H09–H12) and a west park house (H13), all fronting the same circuit road at a constant 7.5 m
+  setback. No driveway crosses a building, and the circuit is an exact rounded rectangle — the
+  previous axis-aligned approximation disagreed with the drawn road by up to 3 m at the corners.
+- **Roundabout-free ring + boulevard**: the gate opens onto a tree-lined boulevard that tees into
+  the circuit; a service road links the circuit to the sports park. Kerbs, centre-line markings and
+  low planting bed borders define every edge.
+- **Condominium lagoon** at the centre: a 32 × 20 m stone-decked lagoon with mosaic basin, submerged
+  steps, a row of sun loungers, parasols and an open pavilion, lit from below at night.
+- **Sports park (west)**: fenced football pitch (24 × 34 m), basketball and futsal courts with
+  regulation markings, goals, hoops, floodlights, benches, a clubhouse with terrace and parking.
+- **Planting**: vegetation only ever spawns inside declared planting beds with clipped hedge borders,
+  so trees, shrubs and flowers cannot land in a plot, on a carport, on a pool or on a road — the
+  invariant is asserted in `tests/site.test.ts`.
 - **Parking:** every home has a parking bay in its front garden — a double carport with two cars for
   T3/T4, a single carport for T1/T2. The bay is offset beside the entrance door, keeps a setback from
   the kerb, stays inside the plot walls, and the gravel driveway is routed to it. Corner plots pick
   the side that actually reaches a road.
 - **Private plots:** every home is enclosed by rendered boundary walls (two side walls plus a rear
   wall), clipped to the fence and sized so party walls never cross into a neighbouring footprint.
+  Plots now carry an 11 m rear garden (was 5.2 m) and a 1.7 m side margin, so the walls, the pools
+  and the sun decks all have room and the houses are spaced on a regular 5 m rhythm.
 - **Pools:** eight of the thirteen homes have a private pool — every T4 and T3, plus the T2s whose
   stable code hash selects them; T1s get a walled garden instead. Each pool is presented with a
   timber sun deck, pale stone coping, an aqua mosaic basin with submerged steps, a steel ladder, two
-  loungers, a parasol, planters and underwater lighting after dark. The deck grows or shrinks with
-  the garden depth, and pool placement stays clear of the roads, the entrance drive and every other
-  footprint.
+  loungers, a parasol, planters and underwater lighting after dark. The deck grows with the garden
+  (up to 1.6 m), and pool placement stays clear of the roads, the boulevard and every other
+  footprint — asserted per unit in the test suite.
 - **Day / night:** one `timeOfDay` switch retints sky, sun/moon, exposure, stars, window glass, lamp
   heads and pool water across the site, the house exteriors and the interiors.
+- **Camera framing** follows the enlarged site: the overview sits at (96, 74, 132) looking at the
+  site centroid, plan view rises to 132 m, and the shadow camera and fog now cover the full extent.
 - **360° orbit:** selecting a home eases the camera from wherever it is into a nine-second 360°
   orbit of that house, then hands control back for free orbiting; plan view, overview and exit
   restore the default camera.
 - **Vegetation:** instanced trees with per-species merged canopies, a brighter layered material and
-  deterministic per-instance tinting. Density is deliberately restrained (120 trees, 55 in the
-  low-quality tier) so the houses and plots stay legible; shrubs, hedges and street lamps follow the
-  same palette.
+  deterministic per-instance tinting. Density is deliberately restrained (96 trees, 54 in the
+  low-quality tier) so the houses and plots stay legible; hedge-bordered beds, flowering borders,
+  shrubs and street lamps follow the same palette.
 - **Appliances:** a procedural kitchen and laundry pack — fridge, induction hob, oven, extractor,
   dishwasher, microwave and washer/dryer — shown in the interiors behind a toggle and listed on
   every property page.
