@@ -8,7 +8,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
-import { ArrowRight, CalendarDays, Layers, Maximize2, Moon, RotateCcw, RotateCw, Sparkles, Sun, X, Boxes, Info, Waves } from "lucide-react";
+import { ArrowRight, CalendarDays, CarFront, Layers, Maximize2, Moon, RotateCcw, RotateCw, Sparkles, Sun, X, Boxes, Info, Waves } from "lucide-react";
 import type { AppSettings, Property, PropertyMedia, PropertyPosition, PropertyStatus, Typology } from "@/lib/domain/types";
 import { PROPERTY_STATUS_LABELS, TYPOLOGIES, TYPOLOGY_CATALOGUE } from "@/lib/domain/constants";
 import { formatArea, formatCurrency, typologyHeadline } from "@/lib/format";
@@ -691,6 +691,10 @@ export function CondominiumExperience({ entries, settings, isAdmin = false, clas
                         <Waves className="h-3 w-3" aria-hidden /> Garden, no pool
                       </span>
                     )}
+                    <span className="inline-flex items-center gap-1 rounded-full border border-ink-900/12 bg-white/70 px-2.5 py-1 text-[0.66rem] text-ink-600">
+                      <CarFront className="h-3 w-3" aria-hidden />
+                      {selected.typology === "T3" || selected.typology === "T4" ? "Double carport" : "Private carport"}
+                    </span>
                   </div>
                   <div className="mt-4 flex flex-wrap gap-1.5">
                     {selected.features.slice(0, 6).map((feature) => (

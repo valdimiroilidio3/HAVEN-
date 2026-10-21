@@ -9,6 +9,8 @@ import { HouseExterior } from "./HouseExterior";
 import { buildCanopies, canopyTint, POOL_COLORS } from "./vegetation";
 import {
   drivewayFor,
+  garageFor,
+  garagePlan,
   lampPositions,
   plotRearDepth,
   plotWallsFor,
@@ -17,6 +19,7 @@ import {
   scatterShrubs,
   scatterTrees,
   SITE,
+  type GarageSpec,
   type PoolSpec,
   type TreeKind,
 } from "@/lib/3d/site";
@@ -99,17 +102,22 @@ function Roads() {
   );
 }
 
-function Driveways({ entries }: { entries: SceneEntry[] }) {
+function Driveways({ entries, plots }: { entries: SceneEntry[]; plots: Array<{ garage: GarageSpec | null }> }) {
   const m = getMaterials();
   const driveways = React.useMemo(
     () =>
       entries
-        .map((entry) => ({
+        .map((entry, index) => ({
           entry,
-          driveway: drivewayFor(entry.position, entry.property.typology, entry.rotationY),
+          driveway: drivewayFor(
+            entry.position,
+            entry.property.typology,
+            entry.rotationY,
+            plots[index]?.garage?.x ?? 0,
+          ),
         }))
         .filter((d): d is { entry: SceneEntry; driveway: NonNullable<ReturnType<typeof drivewayFor>> } => d.driveway !== null),
-    [entries],
+    [entries, plots],
   );
   return (
     <group>
@@ -152,7 +160,7 @@ function Trees({
     });
     return scatterTrees({
       houses: entries.map((e) => ({ position: e.position, typology: e.property.typology, rotationY: e.rotationY })),
-      count: lowQuality ? 90 : 190,
+      count: lowQuality ? 55 : 120,
       seed: 20261021,
       keepOut,
     });
@@ -301,47 +309,271 @@ function PlotBoundary({ typology, rearDepth }: { typology: SceneEntry["property"
   );
 }
 
+/* ── Cars and parking ─────────────────────────────────────────────────── */
+
+function Car({ x, paint, scale = 1 }: { x: number; paint: THREE.Material; scale?: number }) {
+  const m = getMaterials();
+  return (
+    <group position={[x, 0, 0]} scale={[1, 1, scale]}>
+      {/* sills and body */}
+      <mesh position={[0, 0.46, 0]} material={paint} castShadow receiveShadow>
+        <boxGeometry args={[1.76, 0.36, 3.95]} />
+      </mesh>
+      <mesh position={[0, 0.74, -0.06]} material={paint} castShadow>
+        <boxGeometry args={[1.7, 0.34, 3.45]} />
+      </mesh>
+      {/* glazed cabin with a painted roof */}
+      <mesh position={[0, 1.02, -0.2]} material={m.carGlass} castShadow>
+        <boxGeometry args={[1.58, 0.44, 2.15]} />
+      </mesh>
+      <mesh position={[0, 1.24, -0.2]} material={paint} castShadow>
+        <boxGeometry args={[1.5, 0.1, 1.95]} />
+      </mesh>
+      {[[-0.8, 1.28], [0.8, 1.28], [-0.8, -1.32], [0.8, -1.32]].map(([wx, wz], index) => (
+        <mesh
+          key={index}
+          position={[wx!, 0.33, wz!]}
+          rotation={[0, 0, Math.PI / 2]}
+          material={m.charcoal}
+          castShadow
+        >
+          <cylinderGeometry args={[0.33, 0.33, 0.22, 14]} />
+        </mesh>
+      ))}
+      {/* headlights */}
+      <mesh position={[-0.56, 0.7, 1.98]} material={m.white}>
+        <boxGeometry args={[0.46, 0.12, 0.05]} />
+      </mesh>
+      <mesh position={[0.56, 0.7, 1.98]} material={m.white}>
+        <boxGeometry args={[0.46, 0.12, 0.05]} />
+      </mesh>
+    </group>
+  );
+}
+
+/**
+ * Garage / carport in the front garden, sized by the space actually available
+ * before the road. Bigger homes get walled bays with a rolled-up sectional
+ * door; smaller ones a timber carport. Cars are always visible.
+ */
+function Garage({ spec, seed, night, lowQuality }: { spec: GarageSpec; seed: number; night: boolean; lowQuality: boolean }) {
+  const m = getMaterials();
+  const first = m.carPaint[seed % m.carPaint.length] ?? m.carPaint[0]!;
+  const second = m.carPaint[(seed + 1) % m.carPaint.length] ?? m.carPaint[1]!;
+  const height = 3.05;
+  const roof = spec.depth + 0.4;
+  const carScale = Math.min(1, (spec.depth - 0.35) / 4.2);
+
+  return (
+    <group position={[spec.x, 0, spec.z]}>
+      {/* paved apron */}
+      <mesh position={[0, 0.055, 0.02]} material={m.concrete} receiveShadow>
+        <boxGeometry args={[spec.width + 0.8, 0.09, spec.depth + 0.4]} />
+      </mesh>
+      {/* open timber canopy: keeps the cars visible from the masterplan view */}
+      {[-1, 1].map((side) => (
+        <mesh
+          key={`edge-${side}`}
+          position={[0, height, (side * (roof - 0.2)) / 2]}
+          material={m.timberDark}
+          castShadow
+        >
+          <boxGeometry args={[spec.width + 0.9, 0.2, 0.2]} />
+        </mesh>
+      ))}
+      {[-1, 1].map((side) => (
+        <mesh
+          key={`rail-${side}`}
+          position={[(side * (spec.width + 0.9)) / 2, height + 0.02, 0]}
+          material={m.timber}
+          castShadow
+        >
+          <boxGeometry args={[0.14, 0.16, roof]} />
+        </mesh>
+      ))}
+      {Array.from({ length: lowQuality ? 4 : 9 }).map((_, index) => {
+        const count = lowQuality ? 4 : 9;
+        return (
+          <mesh
+            key={`slat-${index}`}
+            position={[0, height + 0.01, -roof / 2 + 0.45 + (index * (roof - 0.9)) / (count - 1)]}
+            material={m.timberDark}
+            castShadow
+          >
+            <boxGeometry args={[spec.width + 0.9, 0.12, 0.14]} />
+          </mesh>
+        );
+      })}
+      {/* street-side posts */}
+      {[-1, 1].map((side) => (
+        <mesh
+          key={side}
+          position={[side * (spec.width / 2 - 0.16), height / 2, spec.depth / 2 + 0.2]}
+          material={m.timber}
+          castShadow
+        >
+          <boxGeometry args={[0.17, height, 0.17]} />
+        </mesh>
+      ))}
+      {spec.walled ? (
+        <>
+          {[-1, 1].map((side) => (
+            <mesh
+              key={`wall-${side}`}
+              position={[side * (spec.width / 2), 1.5, -0.1]}
+              material={m.render}
+              castShadow
+              receiveShadow
+            >
+              <boxGeometry args={[0.18, 3.0, spec.depth - 0.1]} />
+            </mesh>
+          ))}
+          {/* sectional door rolled up under the lintel */}
+          <mesh position={[0, height - 0.44, spec.depth / 2 - 0.05]} material={m.charcoal} castShadow>
+            <boxGeometry args={[spec.width - 0.6, 0.34, 0.15]} />
+          </mesh>
+        </>
+      ) : (
+        <mesh position={[spec.width / 2, 1.45, 0]} material={m.timber} castShadow>
+          <boxGeometry args={[0.12, 2.9, spec.depth - 0.5]} />
+        </mesh>
+      )}
+      {spec.bays === 2 ? (
+        <>
+          <Car x={-1.45} paint={first} scale={carScale} />
+          <Car x={1.45} paint={second} scale={carScale} />
+        </>
+      ) : (
+        <Car x={0} paint={first} scale={carScale} />
+      )}
+      {night && (
+        <mesh position={[0, height - 0.34, spec.depth / 2 - 0.3]} material={m.lampGlass}>
+          <boxGeometry args={[spec.width - 1.4, 0.07, 0.07]} />
+        </mesh>
+      )}
+    </group>
+  );
+}
+
+/* ── Private pools ────────────────────────────────────────────────────── */
+
+function Lounger({ position, rotation = 0 }: { position: [number, number, number]; rotation?: number }) {
+  const m = getMaterials();
+  return (
+    <group position={position} rotation={[0, rotation, 0]}>
+      <mesh position={[0, 0.3, 0]} material={m.timber} castShadow receiveShadow>
+        <boxGeometry args={[0.62, 0.1, 1.86]} />
+      </mesh>
+      <mesh position={[0, 0.38, 0.08]} material={m.white} castShadow>
+        <boxGeometry args={[0.56, 0.1, 1.48]} />
+      </mesh>
+      <mesh position={[0, 0.5, -0.64]} rotation={[-0.62, 0, 0]} material={m.white} castShadow>
+        <boxGeometry args={[0.56, 0.09, 0.72]} />
+      </mesh>
+      {[[-0.24, 0.72], [0.24, 0.72], [-0.24, -0.72], [0.24, -0.72]].map(([x, z], index) => (
+        <mesh key={index} position={[x!, 0.15, z!]} material={m.timberDark}>
+          <boxGeometry args={[0.06, 0.26, 0.06]} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function Parasol({ position }: { position: [number, number, number] }) {
+  const m = getMaterials();
+  return (
+    <group position={position}>
+      <mesh position={[0, 1.15, 0]} material={m.timber} castShadow>
+        <cylinderGeometry args={[0.045, 0.055, 2.3, 8]} />
+      </mesh>
+      <mesh position={[0, 2.32, 0]} material={m.white} castShadow>
+        <cylinderGeometry args={[1.32, 1.32, 0.09, 16]} />
+      </mesh>
+      <mesh position={[0, 2.42, 0]} material={m.timber}>
+        <cylinderGeometry args={[0.03, 0.03, 0.14, 6]} />
+      </mesh>
+    </group>
+  );
+}
+
+function Planter({ position }: { position: [number, number, number] }) {
+  const m = getMaterials();
+  return (
+    <group position={position}>
+      <mesh position={[0, 0.28, 0]} material={m.concrete} castShadow receiveShadow>
+        <cylinderGeometry args={[0.38, 0.32, 0.56, 12]} />
+      </mesh>
+      <mesh position={[0, 0.72, 0]} material={m.hedge} castShadow>
+        <icosahedronGeometry args={[0.42, 1]} />
+      </mesh>
+    </group>
+  );
+}
+
 function Pool({ pool, night, lowQuality }: { pool: PoolSpec; night: boolean; lowQuality: boolean }) {
   const m = getMaterials();
   const water = night ? m.waterNight : m.water;
   const deckWidth = pool.width + pool.deck * 2;
   const deckDepth = pool.depth + pool.deck * 2;
+  const coping = 0.34;
   const colors = night ? POOL_COLORS.night : POOL_COLORS.day;
+  const loungerX = pool.width / 2 + pool.deck * 0.55;
 
   return (
     <group position={[pool.x, 0, pool.z]}>
-      {/* coping / sun deck */}
-      <mesh position={[0, 0.06, 0]} material={m.concrete} receiveShadow castShadow>
-        <boxGeometry args={[deckWidth, 0.12, deckDepth]} />
+      {/* timber sun deck */}
+      <mesh position={[0, 0.05, 0]} material={m.deck} receiveShadow castShadow>
+        <boxGeometry args={[deckWidth, 0.1, deckDepth]} />
       </mesh>
-      {/* basin walls */}
-      <mesh position={[0, -0.12, 0]} material={m.stone} receiveShadow>
-        <boxGeometry args={[pool.width, 0.36, pool.depth]} />
+      {/* pale stone coping framing the water */}
+      {[
+        { x: -(pool.width / 2 + coping / 2), z: 0, w: coping, d: pool.depth + coping * 2 },
+        { x: pool.width / 2 + coping / 2, z: 0, w: coping, d: pool.depth + coping * 2 },
+        { x: 0, z: -(pool.depth / 2 + coping / 2), w: pool.width, d: coping },
+        { x: 0, z: pool.depth / 2 + coping / 2, w: pool.width, d: coping },
+      ].map((rim, index) => (
+        <mesh key={index} position={[rim.x, 0.11, rim.z]} material={m.stone} castShadow receiveShadow>
+          <boxGeometry args={[rim.w, 0.1, rim.d]} />
+        </mesh>
+      ))}
+      {/* tiled basin, water inset so the mosaic reads at the waterline */}
+      <mesh position={[0, -0.2, 0]} material={m.poolTile} receiveShadow>
+        <boxGeometry args={[pool.width, 0.52, pool.depth]} />
       </mesh>
-      {/* water */}
-      <mesh position={[0, 0.09, 0]} material={water}>
-        <boxGeometry args={[pool.width - 0.12, 0.1, pool.depth - 0.12]} />
+      <mesh position={[0, 0.08, 0]} material={water}>
+        <boxGeometry args={[pool.width - 0.14, 0.12, pool.depth - 0.14]} />
       </mesh>
-      {/* steps at one end */}
+      {/* submerged steps at one end */}
       {[0, 1, 2].map((step) => (
         <mesh
           key={step}
-          position={[-pool.width / 2 + 0.4 + step * 0.34, 0.02 - step * 0.06, -pool.depth / 2 + 0.55]}
-          material={m.concrete}
+          position={[-pool.width / 2 + 0.42 + step * 0.36, 0.02 - step * 0.06, -pool.depth / 2 + 0.55]}
+          material={m.poolTile}
           receiveShadow
         >
-          <boxGeometry args={[0.34, 0.06 + step * 0.12, 1.1]} />
+          <boxGeometry args={[0.36, 0.08 + step * 0.12, 1.15]} />
         </mesh>
       ))}
       {/* ladder */}
-      {[-0.16, 0.16].map((offset) => (
-        <mesh key={offset} position={[pool.width / 2 - 0.5 + offset, 0.28, -pool.depth / 2 + 0.9]} material={m.metal} castShadow>
-          <boxGeometry args={[0.05, 0.7, 0.05]} />
+      {[-0.18, 0.18].map((offset) => (
+        <mesh
+          key={offset}
+          position={[pool.width / 2 - 0.5 + offset, 0.3, -pool.depth / 2 + 0.9]}
+          material={m.metal}
+          castShadow
+        >
+          <boxGeometry args={[0.05, 0.72, 0.05]} />
         </mesh>
       ))}
-      <mesh position={[pool.width / 2 - 0.5, 0.56, -pool.depth / 2 + 0.9]} material={m.metal}>
-        <boxGeometry args={[0.42, 0.05, 0.05]} />
+      <mesh position={[pool.width / 2 - 0.5, 0.6, -pool.depth / 2 + 0.9]} material={m.metal}>
+        <boxGeometry args={[0.46, 0.05, 0.05]} />
       </mesh>
+      {/* furniture on the sun deck */}
+      <Lounger position={[loungerX, 0.1, 0.95]} />
+      <Lounger position={[loungerX, 0.1, -0.95]} />
+      {!lowQuality && <Parasol position={[-(pool.width / 2 + pool.deck * 0.55), 0.1, 0]} />}
+      {!lowQuality && <Planter position={[-deckWidth / 2 + 0.55, 0.09, deckDepth / 2 - 0.6]} />}
+      {!lowQuality && <Planter position={[-deckWidth / 2 + 0.55, 0.09, -deckDepth / 2 + 0.6]} />}
       {/* underwater lighting at night */}
       {night && (
         <>
@@ -361,20 +593,24 @@ function Pool({ pool, night, lowQuality }: { pool: PoolSpec; night: boolean; low
 function Plot({
   entry,
   pool,
+  garage,
   rearDepth,
   night,
   lowQuality,
 }: {
   entry: SceneEntry;
   pool: PoolSpec | null;
+  garage: GarageSpec | null;
   rearDepth: number;
   night: boolean;
   lowQuality: boolean;
 }) {
+  const seed = Number(entry.property.code.replace(/\D/g, "")) || 1;
   return (
     <group position={[entry.position.x, 0, entry.position.z]} rotation={[0, (entry.rotationY * Math.PI) / 180, 0]}>
       <PlotBoundary typology={entry.property.typology} rearDepth={rearDepth} />
       {pool && <Pool pool={pool} night={night} lowQuality={lowQuality} />}
+      {garage && <Garage spec={garage} seed={seed} night={night} lowQuality={lowQuality} />}
     </group>
   );
 }
@@ -610,7 +846,12 @@ export function SiteScene({
     () =>
       entries.map((entry) => {
         const rearDepth = plotRearDepth(entry.position, entry.rotationY, entry.property.typology);
-        return { rearDepth, pool: poolFor(entry.property.code, entry.property.typology, rearDepth) };
+        const { garage } = garagePlan(entry.position, entry.rotationY, entry.property.typology);
+        return {
+          rearDepth,
+          pool: poolFor(entry.property.code, entry.property.typology, rearDepth),
+          garage,
+        };
       }),
     [entries],
   );
@@ -639,7 +880,7 @@ export function SiteScene({
       </mesh>
 
       <Roads />
-      <Driveways entries={entries} />
+      <Driveways entries={entries} plots={plots} />
       <Trees entries={entries} plots={plots} lowQuality={lowQuality} night={night} />
       <Shrubs entries={entries} lowQuality={lowQuality} />
       <StreetLamps night={night} lowQuality={lowQuality} />
@@ -650,6 +891,7 @@ export function SiteScene({
           key={`plot-${entry.property.id}`}
           entry={entry}
           pool={plots[index]?.pool ?? null}
+          garage={plots[index]?.garage ?? null}
           rearDepth={plots[index]?.rearDepth ?? 5.2}
           night={night}
           lowQuality={lowQuality}

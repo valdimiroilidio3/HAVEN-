@@ -193,3 +193,36 @@ export function concreteTexture(): THREE.Texture | null {
   cache.set("concrete", texture);
   return texture;
 }
+
+/** Small aqua mosaic for pool basins: reads as tile under the water line. */
+export function poolTileTexture(): THREE.Texture | null {
+  const cached = cache.get("poolTile");
+  if (cached) return cached;
+  const made = makeCanvas(256);
+  if (!made) return null;
+  const { canvas, ctx } = made;
+  ctx.fillStyle = "#6fb9c4";
+  ctx.fillRect(0, 0, 256, 256);
+  const palette = ["#8fd2da", "#7cc4ce", "#a2dde2", "#74bcc7", "#93d5db", "#82c9d2"];
+  let s = 91;
+  const rand = () => {
+    s = (s * 48271) % 2147483647;
+    return s / 2147483647;
+  };
+  const tile = 32;
+  for (let y = 0; y < 256; y += tile) {
+    for (let x = 0; x < 256; x += tile) {
+      ctx.fillStyle = palette[Math.floor(rand() * palette.length)]!;
+      ctx.fillRect(x + 1.5, y + 1.5, tile - 3, tile - 3);
+      const grad = ctx.createLinearGradient(x, y, x, y + tile);
+      grad.addColorStop(0, "rgba(255,255,255,0.16)");
+      grad.addColorStop(1, "rgba(23,73,84,0.14)");
+      ctx.fillStyle = grad;
+      ctx.fillRect(x + 1.5, y + 1.5, tile - 3, tile - 3);
+    }
+  }
+  noise(ctx, 256, 900, 0.12, ["#ffffff", "#3d8a96"], 13);
+  const texture = finish(canvas, 6);
+  cache.set("poolTile", texture);
+  return texture;
+}

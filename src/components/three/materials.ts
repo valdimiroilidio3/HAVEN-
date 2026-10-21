@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { asphaltTexture, concreteTexture, grassTexture, gravelTexture, stoneTexture, timberTexture } from "./textures";
+import { asphaltTexture, concreteTexture, grassTexture, gravelTexture, poolTileTexture, stoneTexture, timberTexture } from "./textures";
 
 export interface HavenMaterials {
   stone: THREE.MeshStandardMaterial;
@@ -28,6 +28,11 @@ export interface HavenMaterials {
   waterNight: THREE.MeshStandardMaterial;
   lampGlass: THREE.MeshStandardMaterial;
   poolLight: THREE.MeshStandardMaterial;
+  /** Aqua mosaic used inside the pool basin. */
+  poolTile: THREE.MeshStandardMaterial;
+  /** Car paint variants for the parking bays. */
+  carPaint: THREE.MeshStandardMaterial[];
+  carGlass: THREE.MeshStandardMaterial;
 }
 
 let cached: HavenMaterials | null = null;
@@ -129,6 +134,25 @@ export function getMaterials(): HavenMaterials {
       emissive: new THREE.Color("#7fdcff"),
       emissiveIntensity: 2.4,
       toneMapped: false,
+    }),
+    poolTile: standard({
+      map: poolTileTexture(),
+      color: new THREE.Color("#b6e3e9"),
+      roughness: 0.26,
+      metalness: 0.06,
+      envMapIntensity: 1.15,
+    }),
+    carPaint: [
+      standard({ color: new THREE.Color("#ecebe6"), roughness: 0.26, metalness: 0.42, envMapIntensity: 1.3 }),
+      standard({ color: new THREE.Color("#2b3034"), roughness: 0.24, metalness: 0.5, envMapIntensity: 1.35 }),
+      standard({ color: new THREE.Color("#1f3448"), roughness: 0.26, metalness: 0.45, envMapIntensity: 1.3 }),
+    ],
+    carGlass: standard({
+      color: new THREE.Color("#0e1418"),
+      roughness: 0.06,
+      metalness: 0.72,
+      transparent: true,
+      opacity: 0.82,
     }),
   };
   return cached;

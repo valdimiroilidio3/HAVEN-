@@ -9,20 +9,20 @@ import type { Typology } from "@/lib/domain/types";
  * geometry, not a surveyed masterplan.
  */
 export const SITE = {
-  width: 108,
-  depth: 104,
+  width: 120,
+  depth: 116,
   center: { x: 0, z: 2 },
   /** Perimeter fence. Private plots are clipped to this rectangle. */
-  fence: { minX: -54, maxX: 54, minZ: -49, maxZ: 55 },
+  fence: { minX: -58, maxX: 58, minZ: -53, maxZ: 59 },
   /** Ring road band (axis-aligned approximation used for layout tests). */
   ring: {
     outer: { minX: -28.75, maxX: 28.75, minZ: -20.75, maxZ: 26.75, radius: 9 },
     inner: { minX: -23.25, maxX: 23.25, minZ: -15.25, maxZ: 21.25, radius: 3.5 },
     width: 5.5,
   },
-  entrance: { minX: 23.25, maxX: 28.75, minZ: 26.75, maxZ: 55 },
+  entrance: { minX: 23.25, maxX: 28.75, minZ: 26.75, maxZ: 59 },
   centralPlaza: { x: 0, z: 4, radius: 7 },
-  gate: { x: 26, z: 55 },
+  gate: { x: 26, z: 59 },
 } as const;
 
 export type Vec2 = { x: number; z: number };
@@ -92,13 +92,14 @@ export interface Driveway {
  * Returns null when no road is found within range (the editor may place a
  * property in an unserviced location).
  */
-export function drivewayFor(position: Vec2, typology: Typology, rotationDeg: number): Driveway | null {
+export function drivewayFor(position: Vec2, typology: Typology, rotationDeg: number, lateral = 0): Driveway | null {
   const plan = getFloorPlan(typology);
   const rad = (rotationDeg * Math.PI) / 180;
   const dir = facingVector(rotationDeg);
+  const side = { x: Math.cos(rad), z: -Math.sin(rad) };
   const frontDistance = (plan.depthM / 2) * Math.abs(Math.cos(rad)) + (plan.widthM / 2) * Math.abs(Math.sin(rad));
-  const startX = position.x + dir.x * frontDistance;
-  const startZ = position.z + dir.z * frontDistance;
+  const startX = position.x + side.x * lateral + dir.x * frontDistance;
+  const startZ = position.z + side.z * lateral + dir.z * frontDistance;
   let reached: number | null = null;
   for (let t = 0; t <= 26; t += 0.25) {
     const px = startX + dir.x * t;
@@ -159,7 +160,7 @@ export interface ScatterInput {
 
 export function scatterTrees({ houses, count = 120, seed = 20261021, region, keepOut = [] }: ScatterInput): TreeInstance[] {
   const rand = mulberry32(seed);
-  const bounds = region ?? { minX: -53, maxX: 53, minZ: -48, maxZ: 54 };
+  const bounds = region ?? { minX: -57, maxX: 57, minZ: -52, maxZ: 58 };
   const houseBoxes = houses.map((h) => houseBounds(h.position, h.typology, h.rotationY, 3.6));
   const trees: TreeInstance[] = [];
   let attempts = 0;
@@ -196,7 +197,7 @@ export function scatterTrees({ houses, count = 120, seed = 20261021, region, kee
 }
 
 export function scatterShrubs(houses: ScatterInput["houses"], seed = 7717): TreeInstance[] {
-  return scatterTrees({ houses, count: 55, seed, region: { minX: -52, maxX: 52, minZ: -47, maxZ: 53 } }).map((t) => ({
+  return scatterTrees({ houses, count: 44, seed, region: { minX: -56, maxX: 56, minZ: -51, maxZ: 57 } }).map((t) => ({
     ...t,
     scale: round(t.scale * 0.32, 2),
     variant: (t.variant % 2) as 0 | 1,
@@ -263,7 +264,7 @@ export interface PoolWorld {
 }
 
 /** Usable site rectangle for private gardens (inside the perimeter wall). */
-export const GARDEN_BOUNDS = { minX: -53.4, maxX: 53.4, minZ: -48.4, maxZ: 54.3 } as const;
+export const GARDEN_BOUNDS = { minX: -57.4, maxX: 57.4, minZ: -52.4, maxZ: 58.3 } as const;
 
 /**
  * How far a house can extend its rear garden before reaching the perimeter.
@@ -283,6 +284,69 @@ export function plotRearDepth(position: Vec2, rotationY: number, typology: Typol
   return round(Math.max(1.8, Math.min(PLOT.rearDepth, available)), 2);
 }
 
+/**
+ * Clear distance in front of the façade, i.e. the depth available between the
+ * house and the road band. Cars are parked here, so it drives the garage size.
+ */
+export function frontGap(position: Vec2, rotationY: number, typology: Typology, lateral = 0): number {
+  const plan = getFloorPlan(typology);
+  const rad = (rotationY * Math.PI) / 180;
+  const dir = facingVector(rotationY);
+  const side = { x: Math.cos(rad), z: -Math.sin(rad) };
+  const facade = (plan.depthM / 2) * Math.abs(Math.cos(rad)) + (plan.widthM / 2) * Math.abs(Math.sin(rad));
+  const startX = position.x + side.x * lateral;
+  const startZ = position.z + side.z * lateral;
+  for (let t = 0; t <= 40; t += 0.2) {
+    if (pointOnRoad(startX + dir.x * (facade + t), startZ + dir.z * (facade + t), 0.2)) return round(t, 2);
+  }
+  return 0;
+}
+
+/**
+ * Offset of the parking bay from the house axis, in local coordinates. It sits
+ * beside the entrance so the front door and its canopy stay clear, and stays
+ * inside the plot boundary wall.
+ */
+export function garageLateral(typology: Typology): number {
+  const plan = getFloorPlan(typology);
+  const half = typology === "T3" || typology === "T4" ? 2.6 : 1.8;
+  return round(plan.widthM / 2 + PLOT.sideMargin - half - 0.7, 2);
+}
+
+export interface GarageSpec {
+  /** Local footprint (front = +Z). */
+  width: number;
+  depth: number;
+  /** Local centre of the parking bay: beside the entrance, clear of the door. */
+  x: number;
+  z: number;
+  /** 1 or 2 parked cars. */
+  bays: 1 | 2;
+  /** Larger homes get side walls and a lintel; smaller ones a light carport. */
+  walled: boolean;
+}
+
+/**
+ * A garage sized to the space actually available in front of the house — a
+ * closed double garage for T3/T4, a one-car carport for T1/T2. Returns null
+ * when the plot has no room for a car, so nothing ever protrudes into the road.
+ */
+export function garageFor(typology: Typology, gap: number, lateral: number = garageLateral(typology)): GarageSpec | null {
+  const plan = getFloorPlan(typology);
+  const bays: 1 | 2 = typology === "T3" || typology === "T4" ? 2 : 1;
+  // Leave a 0.25 m setback from the kerb including the roof overhang.
+  const depth = Math.min(bays === 2 ? 5.6 : 5.0, gap - 0.8);
+  if (depth < 3.8) return null;
+  return {
+    width: bays === 2 ? 5.2 : 3.6,
+    depth: round(depth, 2),
+    x: lateral,
+    z: round(plan.depthM / 2 + 0.35 + depth / 2, 2),
+    bays,
+    walled: bays === 2,
+  };
+}
+
 function codeHash(code: string): number {
   let h = 2166136261;
   for (let i = 0; i < code.length; i++) {
@@ -290,6 +354,21 @@ function codeHash(code: string): number {
     h = Math.imul(h, 16777619);
   }
   return Math.abs(h);
+}
+
+/**
+ * Choose the side of the entrance for the parking bay: both sides of the house
+ * are tried and the deeper bay wins. Corner plots (H08, H12) only reach a road
+ * on one side, so the choice is not cosmetic.
+ */
+export function garagePlan(position: Vec2, rotationY: number, typology: Typology): { garage: GarageSpec | null; lateral: number } {
+  const base = garageLateral(typology);
+  let best: { garage: GarageSpec | null; lateral: number } = { garage: null, lateral: base };
+  for (const lateral of [base, -base]) {
+    const garage = garageFor(typology, frontGap(position, rotationY, typology, lateral), lateral);
+    if (garage && garage.depth > (best.garage?.depth ?? 0)) best = { garage, lateral };
+  }
+  return best;
 }
 
 /**
@@ -308,9 +387,11 @@ export function poolFor(code: string, typology: Typology, rearDepth: number = PL
 
   const width = typology === "T4" ? 6.4 : typology === "T3" ? 5.4 : 4.6;
   const depth = typology === "T4" ? 3.0 : 2.6;
-  const deck = 0.55;
+  // Spend whatever the garden affords on the sun deck (0.5 m up to 1.3 m); the
+  // water keeps a constant gap from the façade and the rear wall.
+  const deck = round(Math.min(1.3, Math.max(0.5, (rearDepth - depth - 0.7) / 2)), 2);
   if (rearDepth < depth + deck * 2 + 0.5) return null;
-  const maxWidth = plan.widthM - PLOT.sideMargin * 2 - 0.8;
+  const maxWidth = plan.widthM - (PLOT.sideMargin + deck) * 2 - 0.4;
   const fittedWidth = Math.min(width, Math.max(2.4, maxWidth));
   const fittedDepth = depth;
   const rearEdge = plan.depthM / 2;

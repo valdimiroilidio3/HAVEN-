@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  drivewayFor,
   footprintExtents,
   GARDEN_BOUNDS,
+  garageFor,
+  garageLateral,
+  garagePlan,
   PLOT,
   plotRearDepth,
   plotWallsFor,
+  pointOnRoad,
   poolFor,
   poolKeepOut,
   poolWorld,
@@ -161,6 +166,53 @@ describe("plot layout", () => {
       // The entrance drive runs along the east edge of the front row.
       const entrance = { minX: 23.25, maxX: 28.75, minZ: 26.75, maxZ: 55 };
       expect(intersects(box, entrance), `${seed.code} pool sits on the entrance drive`).toBe(false);
+    }
+  });
+
+  it("gives every home a parking bay that fits between the façade and the road", () => {
+    for (const seed of SEED_UNITS) {
+      const { garage, lateral } = garagePlan(seed.position, seed.position.rotationY, seed.typology);
+      expect(garage, `${seed.code} has no parking`).not.toBeNull();
+      const plan = getFloorPlan(seed.typology);
+      const twoBays = seed.typology === "T3" || seed.typology === "T4";
+      expect(garage!.bays).toBe(twoBays ? 2 : 1);
+      // The bay starts at the façade and never reaches the road.
+      expect(garage!.z - garage!.depth / 2).toBeGreaterThanOrEqual(plan.depthM / 2);
+      expect(Math.sign(lateral)).toBe(Math.sign(garage!.x));
+      expect(Math.abs(garage!.x) + garage!.width / 2).toBeLessThanOrEqual(plan.widthM / 2 + PLOT.sideMargin);
+      // The driveway that feeds it is connected to the road network.
+      expect(drivewayFor(seed.position, seed.typology, seed.position.rotationY, lateral)).not.toBeNull();
+    }
+  });
+
+  it("keeps parking clear of the road and of neighbouring homes", () => {
+    for (const seed of SEED_UNITS) {
+      const { garage } = garagePlan(seed.position, seed.position.rotationY, seed.typology);
+      const box = worldBox(seed, garage!.x, garage!.z, garage!.width + 0.9, garage!.depth + 0.4);
+      for (let tx = 0; tx <= 1; tx += 0.5) {
+        for (let tz = 0; tz <= 1; tz += 0.5) {
+          const x = box.minX + (box.maxX - box.minX) * tx;
+          const z = box.minZ + (box.maxZ - box.minZ) * tz;
+          expect(pointOnRoad(x, z, 0.15), `${seed.code} carport overhangs the road`).toBe(false);
+        }
+      }
+      for (const other of SEED_UNITS) {
+        if (other.code === seed.code) continue;
+        expect(intersects(box, footprintOf(other)), `${seed.code} carport intrudes on ${other.code}`).toBe(false);
+      }
+    }
+  });
+
+  it("keeps the parking bay inside the plot side walls", () => {
+    for (const seed of SEED_UNITS) {
+      const { garage } = garagePlan(seed.position, seed.position.rotationY, seed.typology);
+      const plan = getFloorPlan(seed.typology);
+      const outer = Math.abs(garage!.x) + garage!.width / 2 + 0.45;
+      expect(outer).toBeLessThanOrEqual(plan.widthM / 2 + PLOT.sideMargin - 0.1);
+      expect(Math.abs(garage!.x)).toBeGreaterThan(0);
+      expect(garageFor(seed.typology, 40)!.depth).toBeGreaterThanOrEqual(4);
+      expect(garageFor(seed.typology, 3)).toBeNull();
+      expect(garageLateral(seed.typology)).toBeGreaterThan(0);
     }
   });
 });

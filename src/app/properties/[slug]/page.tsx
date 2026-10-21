@@ -133,7 +133,7 @@ export default async function PropertyPage({ params }: { params: Promise<{ slug:
                     pool ? "Private pool and deck" : "Landscaped private garden",
                     "Equipped kitchen: fridge, induction hob, oven, extractor, dishwasher, microwave",
                     "Laundry: washer / dryer",
-                    "Outdoor parking",
+                    property.typology === "T3" || property.typology === "T4" ? "Double carport with two bays" : "Private carport",
                   ].map((item) => (
                     <li key={item} className="rounded-full border border-moss-300/60 bg-moss-100/60 px-2.5 py-1 text-[0.68rem] text-moss-800">
                       {item}

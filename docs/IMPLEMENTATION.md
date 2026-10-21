@@ -9,7 +9,7 @@ explicitly marked **unverified**.
 | --- | --- | --- |
 | TypeScript (strict) | `npx tsc --noEmit` | pass, 0 errors |
 | Lint | `npm run lint` | pass, 0 errors (warnings only) |
-| Unit tests | `npx vitest run` | 51/51 pass (6 files) |
+| Unit tests | `npx vitest run` | 54/54 pass (6 files) |
 | Data-layer smoke | `npx tsx scripts/smoke.ts` | 22/22 checks pass |
 | Production build | `npm run build` | pass; 17 routes + middleware compiled |
 | Public rendering | HTTP against `next dev` | `/`, `/properties`, `/properties/[slug]`, `/visit`, `/login` → 200 |
@@ -37,21 +37,29 @@ Not verified, by absence of resources rather than by omission:
 - Login page with safe `next` redirection and demo pre-fill in development.
 
 ### 3D system
-- Procedural site (108 × 104 m, fenced perimeter with a single gate), 13 homes with
+- Procedural site (120 × 116 m, fenced perimeter with a single gate), 13 homes with
   typology-specific massing, driveways, planting and lighting; camera modes for site and plan view.
+- **Parking:** every home has a parking bay in its front garden — a double carport with two cars for
+  T3/T4, a single carport for T1/T2. The bay is offset beside the entrance door, keeps a setback from
+  the kerb, stays inside the plot walls, and the gravel driveway is routed to it. Corner plots pick
+  the side that actually reaches a road.
 - **Private plots:** every home is enclosed by rendered boundary walls (two side walls plus a rear
   wall), clipped to the fence and sized so party walls never cross into a neighbouring footprint.
-- **Pools:** eight of the thirteen homes have a private pool with a deck — every T4 and T3, plus the
-  T2s whose stable code hash selects them; T1s get a walled garden instead. Pool placement is
-  deterministic, clipped to the garden depth, and kept off the road, the entrance drive and every
-  other footprint.
+- **Pools:** eight of the thirteen homes have a private pool — every T4 and T3, plus the T2s whose
+  stable code hash selects them; T1s get a walled garden instead. Each pool is presented with a
+  timber sun deck, pale stone coping, an aqua mosaic basin with submerged steps, a steel ladder, two
+  loungers, a parasol, planters and underwater lighting after dark. The deck grows or shrinks with
+  the garden depth, and pool placement stays clear of the roads, the entrance drive and every other
+  footprint.
 - **Day / night:** one `timeOfDay` switch retints sky, sun/moon, exposure, stars, window glass, lamp
   heads and pool water across the site, the house exteriors and the interiors.
 - **360° orbit:** selecting a home eases the camera from wherever it is into a nine-second 360°
   orbit of that house, then hands control back for free orbiting; plan view, overview and exit
   restore the default camera.
 - **Vegetation:** instanced trees with per-species merged canopies, a brighter layered material and
-  deterministic per-instance tinting; shrubs, hedges and street lamps follow the same palette.
+  deterministic per-instance tinting. Density is deliberately restrained (120 trees, 55 in the
+  low-quality tier) so the houses and plots stay legible; shrubs, hedges and street lamps follow the
+  same palette.
 - **Appliances:** a procedural kitchen and laundry pack — fridge, induction hob, oven, extractor,
   dishwasher, microwave and washer/dryer — shown in the interiors behind a toggle and listed on
   every property page.
