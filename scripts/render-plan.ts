@@ -30,6 +30,7 @@ import {
   poolFor,
   scatterFlowers,
   scatterShrubs,
+  plotFootprints,
   scatterTrees,
   sportsKeepOut,
 } from "../src/lib/3d/site";
@@ -161,7 +162,10 @@ const poolZones = SEED_UNITS.flatMap((unit) => {
   const rad = (unit.position.rotationY * Math.PI) / 180;
   return [{ x: unit.position.x + pool.x * Math.cos(rad) + pool.z * Math.sin(rad), z: unit.position.z - pool.x * Math.sin(rad) + pool.z * Math.cos(rad), radius: Math.max(pool.width, pool.depth) / 2 + 1.8 }];
 });
-const trees = scatterTrees({ houses, count: 96, keepOut: [...poolZones, ...sportsKeepOut()] });
+// The plan shows the same planting the 3D viewer shows: beds clipped to public
+// land, plots excluded. If the two disagree, the plan is lying.
+const plotRects = plotFootprints(houses);
+const trees = scatterTrees({ houses, count: 96, keepOut: [...poolZones, ...sportsKeepOut()], exclude: plotRects });
 console.log("trees", trees.length);
 for (const tree of trees) circle(tree.x, tree.z, 1.3, 56, 100, 52);
 for (const shrub of scatterShrubs(houses)) circle(shrub.x, shrub.z, 0.6, 78, 124, 66);

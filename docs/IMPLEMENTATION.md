@@ -9,7 +9,7 @@ explicitly marked **unverified**.
 | --- | --- | --- |
 | TypeScript (strict) | `npx tsc --noEmit` | pass, 0 errors |
 | Lint | `npm run lint` | pass, 0 errors (warnings only) |
-| Unit tests | `npx vitest run` | 58/58 pass (6 files) |
+| Unit tests | `npx vitest run` | 76/76 pass (7 files) |
 | Data-layer smoke | `npx tsx scripts/smoke.ts` | 22/22 checks pass |
 | Production build | `npm run build` | pass; 17 routes + middleware compiled |
 | Public rendering | HTTP against `next dev` | `/`, `/properties`, `/properties/[slug]`, `/visit`, `/login` → 200 |
@@ -24,6 +24,8 @@ Not verified, by absence of resources rather than by omission:
 - A real GLB was never uploaded and rendered (no licensed model was available).
 - No browser E2E suite: interactions were verified by build + server rendering + repository smoke
   tests, not by automated clicks.
+
+The 3D scene has its own audit: [`docs/3D-AUDIT.md`](./3D-AUDIT.md).
 
 ## Implemented
 

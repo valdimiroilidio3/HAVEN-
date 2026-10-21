@@ -45,7 +45,7 @@ export const SITE = {
   /** Condominium lagoon: the centrepiece of the central garden. */
   lagoon: { x: 0, z: 4, radiusX: 16, radiusZ: 10.2, deck: 5 },
   /** Open-air pavilion on the lagoon deck. */
-  pavilion: { x: 0, z: -13.6, width: 11, depth: 5.5 },
+  pavilion: { x: 0, z: -8.7, width: 11, depth: 4.2 },
   /** Sports park, west of the circuit. Courts are fenced 5-a-side/3x3 pitches. */
   sportsPark: { minX: -92, maxX: -64, minZ: -58, maxZ: 68 },
 } as const;
@@ -304,6 +304,48 @@ export const PLANTING_BEDS: Array<Rect & { mix: TreeKind[] }> = [
   { minX: -98, maxX: -94, minZ: -58, maxZ: 60, mix: ["conifer", "poplar"] },
 ];
 
+/**
+ * Subtract a rectangle from another, returning up to four disjoint pieces.
+ * Used to clip planting beds against private plots so no hedge border or
+ * scattered tree can ever end up inside a garden.
+ */
+export function subtractRect(bed: Rect, cut: Rect): Rect[] {
+  const ix0 = Math.max(bed.minX, cut.minX);
+  const ix1 = Math.min(bed.maxX, cut.maxX);
+  const iz0 = Math.max(bed.minZ, cut.minZ);
+  const iz1 = Math.min(bed.maxZ, cut.maxZ);
+  if (ix1 <= ix0 || iz1 <= iz0) return [bed];
+  const out: Rect[] = [];
+  if (ix0 > bed.minX) out.push({ minX: bed.minX, maxX: ix0, minZ: bed.minZ, maxZ: bed.maxZ });
+  if (ix1 < bed.maxX) out.push({ minX: ix1, maxX: bed.maxX, minZ: bed.minZ, maxZ: bed.maxZ });
+  if (iz0 > bed.minZ) out.push({ minX: ix0, maxX: ix1, minZ: bed.minZ, maxZ: iz0 });
+  if (iz1 < bed.maxZ) out.push({ minX: ix0, maxX: ix1, minZ: iz1, maxZ: iz1 + (bed.maxZ - iz1) });
+  return out;
+}
+
+/** Smallest bed fragment worth planting or edging. */
+const MIN_BED = 1.6;
+
+/**
+ * The planting beds as they actually exist on site: the authored beds minus
+ * every private plot. Renderer, scatter and validator all call this, so a hedge
+ * border cannot run through a garden wall even after a plot is moved.
+ */
+export function plantingBeds(exclude: Rect[] = []): Array<Rect & { mix: TreeKind[] }> {
+  let beds = PLANTING_BEDS.map((bed) => ({ ...bed }));
+  for (const cut of exclude) {
+    beds = beds.flatMap((bed) => subtractRect(bed, cut).map((piece) => ({ ...piece, mix: bed.mix })));
+  }
+  return beds.filter((bed) => bed.maxX - bed.minX >= MIN_BED && bed.maxZ - bed.minZ >= MIN_BED);
+}
+
+/** Flower borders, clipped by the same rule. */
+export function flowerBeds(exclude: Rect[] = []): Rect[] {
+  let beds: Rect[] = FLOWER_BEDS.map((bed) => ({ ...bed }));
+  for (const cut of exclude) beds = beds.flatMap((bed) => subtractRect(bed, cut));
+  return beds.filter((bed) => bed.maxX - bed.minX >= 0.8 && bed.maxZ - bed.minZ >= 0.8);
+}
+
 /** Beds that read as flower borders rather than woodland. */
 const FLOWER_BEDS: Rect[] = [
   // Boulevard verges, between the kerb and the poplar avenue.
@@ -324,15 +366,19 @@ export interface ScatterInput {
   region?: Rect;
   /** Circular keep-out areas in world space (pools, patios, play areas). */
   keepOut?: Array<{ x: number; z: number; radius: number }>;
+  /** Rectangles no plant may enter — private plots above all. */
+  exclude?: Rect[];
 }
 
 const HOUSE_CLEARANCE = 5.4;
 const TREE_SPACING = 4.2;
 
-export function scatterTrees({ houses, count = 96, seed = 20261021, region, keepOut = [] }: ScatterInput): TreeInstance[] {
+export function scatterTrees({ houses, count = 96, seed = 20261021, region, keepOut = [], exclude = [] }: ScatterInput): TreeInstance[] {
   const rand = mulberry32(seed);
   const houseBoxes = houses.map((h) => houseBounds(h.position, h.typology, h.rotationY, HOUSE_CLEARANCE));
-  const beds = region ? [{ ...region, mix: ["broadleaf", "olive", "poplar", "conifer"] as TreeKind[] }] : PLANTING_BEDS;
+  const beds = region
+    ? [{ ...region, mix: ["broadleaf", "olive", "poplar", "conifer"] as TreeKind[] }]
+    : plantingBeds(exclude);
   const trees: TreeInstance[] = [];
   let attempts = 0;
   const maxAttempts = count * 60;
@@ -346,6 +392,7 @@ export function scatterTrees({ houses, count = 96, seed = 20261021, region, keep
     if (pointOnRoad(x, z, 2.4)) continue;
     if (houseBoxes.some((b) => x > b.minX && x < b.maxX && z > b.minZ && z < b.maxZ)) continue;
     if (keepOut.some((zone) => Math.hypot(zone.x - x, zone.z - z) < zone.radius)) continue;
+    if (exclude.some((rect) => pointInRect(x, z, rect))) continue;
     if (trees.some((t) => Math.hypot(t.x - x, t.z - z) < TREE_SPACING)) continue;
     const kind = bed.mix[Math.floor(rand() * bed.mix.length)] ?? "broadleaf";
     trees.push({
@@ -360,9 +407,9 @@ export function scatterTrees({ houses, count = 96, seed = 20261021, region, keep
   return trees;
 }
 
-export function scatterShrubs(houses: ScatterInput["houses"], seed = 7717): TreeInstance[] {
+export function scatterShrubs(houses: ScatterInput["houses"], seed = 7717, exclude: Rect[] = []): TreeInstance[] {
   const rand = mulberry32(seed);
-  const beds = PLANTING_BEDS.slice(0, 10);
+  const beds = plantingBeds(exclude).slice(0, 10);
   const shrubs: TreeInstance[] = [];
   for (let i = 0; i < 260 && shrubs.length < 64; i++) {
     const bed = beds[Math.floor(rand() * beds.length)]!;
@@ -370,6 +417,7 @@ export function scatterShrubs(houses: ScatterInput["houses"], seed = 7717): Tree
     const z = bed.minZ + rand() * (bed.maxZ - bed.minZ);
     if (pointOnRoad(x, z, 1.6)) continue;
     if (houses.some((h) => pointInRect(x, z, houseBounds(h.position, h.typology, h.rotationY, 2.6)))) continue;
+    if (exclude.some((rect) => pointInRect(x, z, rect))) continue;
     if (shrubs.some((s) => Math.hypot(s.x - x, s.z - z) < 3)) continue;
     shrubs.push({
       x: round(x),
@@ -390,16 +438,17 @@ export interface FlowerInstance {
   tone: 0 | 1 | 2;
 }
 
-export function scatterFlowers(seed = 4242): FlowerInstance[] {
+export function scatterFlowers(seed = 4242, exclude: Rect[] = []): FlowerInstance[] {
   const rand = mulberry32(seed);
   const flowers: FlowerInstance[] = [];
-  for (const bed of FLOWER_BEDS) {
+  for (const bed of flowerBeds(exclude)) {
     const area = (bed.maxX - bed.minX) * (bed.maxZ - bed.minZ);
     const count = Math.max(8, Math.round(area * 0.55));
     for (let i = 0; i < count; i++) {
       const x = bed.minX + rand() * (bed.maxX - bed.minX);
       const z = bed.minZ + rand() * (bed.maxZ - bed.minZ);
       if (pointOnRoad(x, z, 0.4)) continue;
+      if (exclude.some((rect) => pointInRect(x, z, rect))) continue;
       flowers.push({ x: round(x), z: round(z), scale: round(0.5 + rand() * 0.5, 2), tone: Math.floor(rand() * 3) as 0 | 1 | 2 });
     }
   }
@@ -411,8 +460,54 @@ function round(n: number, digits = 2): number {
   return Math.round(n * p) / p;
 }
 
+/**
+ * World-space footprint of a private plot: the boundary walls plus the house.
+ * This is the rectangle that vegetation, lamps and neighbouring plots must
+ * stay out of — the same numbers the renderer draws.
+ */
+export function plotFootprint(
+  position: Vec2,
+  rotationY: number,
+  typology: Typology,
+  rearDepth: number = PLOT.rearDepth,
+): Rect {
+  const rad = (rotationY * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  let minX = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let minZ = Number.POSITIVE_INFINITY;
+  let maxZ = Number.NEGATIVE_INFINITY;
+  const include = (x: number, z: number) => {
+    const wx = position.x + x * cos + z * sin;
+    const wz = position.z - x * sin + z * cos;
+    minX = Math.min(minX, wx);
+    maxX = Math.max(maxX, wx);
+    minZ = Math.min(minZ, wz);
+    maxZ = Math.max(maxZ, wz);
+  };
+  for (const wall of plotWallsFor(typology, rearDepth)) {
+    const hw = wall.width / 2;
+    const hd = wall.depth / 2;
+    include(wall.x - hw, wall.z - hd);
+    include(wall.x + hw, wall.z - hd);
+    include(wall.x - hw, wall.z + hd);
+    include(wall.x + hw, wall.z + hd);
+  }
+  return { minX, maxX, minZ, maxZ };
+}
+
+/** Every plot footprint on the site — used as a planting exclusion. */
+export function plotFootprints(
+  entries: Array<{ position: Vec2; rotationY: number; typology: Typology }>,
+  rearDepthFor: (entry: { position: Vec2; rotationY: number; typology: Typology }) => number = (entry) =>
+    plotRearDepth(entry.position, entry.rotationY, entry.typology),
+): Rect[] {
+  return entries.map((entry) => plotFootprint(entry.position, entry.rotationY, entry.typology, rearDepthFor(entry)));
+}
+
 /** Street lamp positions: circuit, boulevard and sports park. */
-export function lampPositions(): Vec2[] {
+export function lampPositions(exclude: Rect[] = []): Vec2[] {
   const positions: Vec2[] = [];
   const zNorth = SITE.ring.outer.minZ - 2.6;
   const zSouth = SITE.ring.outer.maxZ + 2.6;
@@ -420,7 +515,8 @@ export function lampPositions(): Vec2[] {
   const xEast = SITE.ring.outer.maxX + 2.6;
   for (let x = -30; x <= 30; x += 15) {
     positions.push({ x, z: zNorth });
-    positions.push({ x, z: zSouth });
+    // Keep the boulevard junction clear: no lamp inside the gate approach.
+    if (Math.abs(x) > 6) positions.push({ x, z: zSouth });
   }
   for (let z = -22; z <= 32; z += 13.5) {
     positions.push({ x: xWest, z });
@@ -430,7 +526,7 @@ export function lampPositions(): Vec2[] {
     positions.push({ x: -6.4, z });
     positions.push({ x: 6.4, z });
   }
-  return positions;
+  return exclude.length ? positions.filter((lamp) => !exclude.some((rect) => pointInRect(lamp.x, lamp.z, rect))) : positions;
 }
 
 /* ── Sports park (west) ───────────────────────────────────────────────── */
