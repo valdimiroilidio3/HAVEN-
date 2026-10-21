@@ -23,6 +23,11 @@ export interface HavenMaterials {
   white: THREE.MeshStandardMaterial;
   sand: THREE.MeshStandardMaterial;
   water: THREE.MeshStandardMaterial;
+  /** Warmly lit glazing used at night. */
+  glassNight: THREE.MeshStandardMaterial;
+  waterNight: THREE.MeshStandardMaterial;
+  lampGlass: THREE.MeshStandardMaterial;
+  poolLight: THREE.MeshStandardMaterial;
 }
 
 let cached: HavenMaterials | null = null;
@@ -75,16 +80,56 @@ export function getMaterials(): HavenMaterials {
     lawn: standard({ map: grassMap, color: new THREE.Color("#7f9163"), roughness: 1 }),
     gravel: standard({ map: gravelMap, color: new THREE.Color("#cec6b2"), roughness: 1 }),
     deck: standard({ map: timberMap, color: new THREE.Color("#b08a61"), roughness: 0.78 }),
-    hedge: standard({ color: new THREE.Color("#465436"), roughness: 1 }),
+    hedge: standard({ color: new THREE.Color("#4d5e3a"), roughness: 0.86, envMapIntensity: 1.05 }),
     trunk: standard({ color: new THREE.Color("#5d4a37"), roughness: 0.95 }),
+    // Softer roughness with a touch of environment response so canopies catch
+    // the sun instead of reading as flat matte blobs.
     foliage: [
-      standard({ color: new THREE.Color("#4d6138"), roughness: 1, flatShading: true }),
-      standard({ color: new THREE.Color("#5c7042"), roughness: 1, flatShading: true }),
-      standard({ color: new THREE.Color("#6a7d4c"), roughness: 1, flatShading: true }),
+      standard({ color: new THREE.Color("#5b7742"), roughness: 0.78, metalness: 0.02, flatShading: true, envMapIntensity: 1.2 }),
+      standard({ color: new THREE.Color("#6b8749"), roughness: 0.76, metalness: 0.02, flatShading: true, envMapIntensity: 1.2 }),
+      standard({ color: new THREE.Color("#7b9552"), roughness: 0.74, metalness: 0.02, flatShading: true, envMapIntensity: 1.25 }),
     ],
     white: standard({ color: new THREE.Color("#f1eee5"), roughness: 0.9 }),
     sand: standard({ color: new THREE.Color("#c7a77a"), roughness: 0.8 }),
-    water: standard({ color: new THREE.Color("#4d6b6b"), roughness: 0.08, metalness: 0.4, transparent: true, opacity: 0.85 }),
+    water: standard({
+      color: new THREE.Color("#4f9fae"),
+      roughness: 0.06,
+      metalness: 0.55,
+      transparent: true,
+      opacity: 0.9,
+      envMapIntensity: 1.5,
+    }),
+    glassNight: standard({
+      color: new THREE.Color("#2b2417"),
+      emissive: new THREE.Color("#ffbf7a"),
+      emissiveIntensity: 0.95,
+      roughness: 0.28,
+      metalness: 0.35,
+      transparent: true,
+      opacity: 0.94,
+    }),
+    waterNight: standard({
+      color: new THREE.Color("#12333d"),
+      emissive: new THREE.Color("#1d7c93"),
+      emissiveIntensity: 0.55,
+      roughness: 0.08,
+      metalness: 0.6,
+      transparent: true,
+      opacity: 0.92,
+      envMapIntensity: 1.1,
+    }),
+    lampGlass: standard({
+      color: new THREE.Color("#fff3d6"),
+      emissive: new THREE.Color("#ffc987"),
+      emissiveIntensity: 0.25,
+      roughness: 0.35,
+    }),
+    poolLight: standard({
+      color: new THREE.Color("#bff0ff"),
+      emissive: new THREE.Color("#7fdcff"),
+      emissiveIntensity: 2.4,
+      toneMapped: false,
+    }),
   };
   return cached;
 }

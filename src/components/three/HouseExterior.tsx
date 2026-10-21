@@ -22,6 +22,8 @@ export interface HouseExteriorProps {
   hovered: boolean;
   ghosted?: boolean;
   lowQuality?: boolean;
+  /** Night renders lit glazing and a warm porch light. */
+  night?: boolean;
   onSelect?: (id: string) => void;
   onHover?: (id: string | null) => void;
 }
@@ -62,6 +64,7 @@ export function HouseExterior({
   hovered,
   ghosted = false,
   lowQuality = false,
+  night = false,
   onSelect,
   onHover,
 }: HouseExteriorProps) {
@@ -125,7 +128,7 @@ export function HouseExterior({
       {meshFor("foliage0", materials.foliage[0]!)}
       {meshFor("foliage1", materials.foliage[1]!)}
       {meshFor("foliage2", materials.foliage[2]!)}
-      {meshFor("glass", materials.glass, false)}
+      {meshFor("glass", night ? materials.glassNight : materials.glass, false)}
       {meshFor("glassRail", materials.glassRail, false)}
       {selected && (
         <Html position={[0, config.groundH + config.upperH + 2.2, 0]} center distanceFactor={30} zIndexRange={[30, 0]} style={{ pointerEvents: "none" }}>
@@ -134,8 +137,11 @@ export function HouseExterior({
           </div>
         </Html>
       )}
+      {night && !lowQuality && (
+        <pointLight position={[0, 2.1, plan.depthM / 2 + 0.8]} intensity={2.4} distance={7} decay={2} color="#ffc182" />
+      )}
       {selected && !lowQuality && (
-        <pointLight position={[0, 2.2, plan.depthM / 2]} intensity={8} distance={14} color="#ffd9a0" />
+        <pointLight position={[0, 2.2, plan.depthM / 2]} intensity={night ? 3.2 : 8} distance={14} color="#ffd9a0" />
       )}
     </group>
   );

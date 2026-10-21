@@ -9,6 +9,7 @@ import { getFloorPlan, type FloorPlan, type PlanRoom } from "@/lib/domain/floorp
 import { deriveOpenings, deriveWalls } from "@/lib/domain/plan-geometry";
 import type { Typology } from "@/lib/domain/types";
 import { getInteriorMaterials } from "./materials";
+import type { PoolSpec } from "@/lib/3d/site";
 import { Furniture3D } from "./Furniture3D";
 
 /**
@@ -18,15 +19,15 @@ import { Furniture3D } from "./Furniture3D";
  * for the dollhouse view.
  */
 
-function InteriorLighting({ plan, quality }: { plan: FloorPlan; quality: "low" | "high" }) {
+function InteriorLighting({ plan, quality, night }: { plan: FloorPlan; quality: "low" | "high"; night: boolean }) {
   return (
     <>
-      <ambientLight intensity={0.55} color="#f3efe6" />
-      <hemisphereLight args={["#dfe6ea", "#8b826d", 0.6]} />
+      <ambientLight intensity={night ? 0.2 : 0.55} color={night ? "#94a6c4" : "#f3efe6"} />
+      <hemisphereLight args={[night ? "#2f3a52" : "#dfe6ea", night ? "#241f18" : "#8b826d", night ? 0.24 : 0.6]} />
       <directionalLight
         position={[plan.widthM * 0.8, 22, -plan.depthM * 1.2]}
-        intensity={3.1}
-        color="#ffe7c4"
+        intensity={night ? 0.55 : 3.1}
+        color={night ? "#9fb4d8" : "#ffe7c4"}
         castShadow
         shadow-mapSize-width={quality === "high" ? 2048 : 1024}
         shadow-mapSize-height={quality === "high" ? 2048 : 1024}
@@ -39,9 +40,10 @@ function InteriorLighting({ plan, quality }: { plan: FloorPlan; quality: "low" |
         shadow-bias={-0.0004}
         shadow-normalBias={0.02}
       />
-      <directionalLight position={[-14, 12, 10]} intensity={0.6} color="#cfd9e0" />
-      <pointLight position={[plan.widthM * 0.2, 2.6, -plan.depthM * 0.2]} intensity={6} distance={9} color="#ffd9a8" />
-      <pointLight position={[-plan.widthM * 0.25, 2.6, plan.depthM * 0.2]} intensity={4} distance={8} color="#ffe2b8" />
+      <directionalLight position={[-14, 12, 10]} intensity={night ? 0.18 : 0.6} color="#cfd9e0" />
+      <pointLight position={[plan.widthM * 0.2, 2.6, -plan.depthM * 0.2]} intensity={night ? 11 : 6} distance={night ? 12 : 9} color="#ffd9a8" />
+      <pointLight position={[-plan.widthM * 0.25, 2.6, plan.depthM * 0.2]} intensity={night ? 8 : 4} distance={night ? 11 : 8} color="#ffe2b8" />
+      {night && <pointLight position={[0, 2.4, plan.depthM * 0.35]} intensity={5} distance={9} color="#ffcf9a" />}
     </>
   );
 }
@@ -207,9 +209,43 @@ function Ceilings({ plan, materials }: { plan: FloorPlan; materials: ReturnType<
   );
 }
 
-function Garden({ plan, materials }: { plan: FloorPlan; materials: ReturnType<typeof getInteriorMaterials> }) {
-  const grass = React.useMemo(() => new THREE.MeshStandardMaterial({ color: "#7c8c5e", roughness: 1 }), []);
-  React.useEffect(() => () => grass.dispose(), [grass]);
+function Garden({
+  plan,
+  materials,
+  pool,
+  night,
+}: {
+  plan: FloorPlan;
+  materials: ReturnType<typeof getInteriorMaterials>;
+  pool: PoolSpec | null;
+  night: boolean;
+}) {
+  const grass = React.useMemo(() => new THREE.MeshStandardMaterial({ color: night ? "#3d462f" : "#7c8c5e", roughness: 1 }), [night]);
+  const water = React.useMemo(
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: night ? "#12333d" : "#4f9fae",
+        emissive: night ? new THREE.Color("#1d7c93") : new THREE.Color("#000000"),
+        emissiveIntensity: night ? 0.5 : 0,
+        roughness: 0.07,
+        metalness: 0.55,
+        transparent: true,
+        opacity: 0.92,
+      }),
+    [night],
+  );
+  const light = React.useMemo(
+    () => new THREE.MeshBasicMaterial({ color: "#8ee0ff", toneMapped: false }),
+    [],
+  );
+  React.useEffect(
+    () => () => {
+      grass.dispose();
+      water.dispose();
+      light.dispose();
+    },
+    [grass, water, light],
+  );
   return (
     <group>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.1, 0]} material={grass} receiveShadow>
@@ -220,6 +256,31 @@ function Garden({ plan, materials }: { plan: FloorPlan; materials: ReturnType<ty
           <boxGeometry args={[2.2, 1.5, 9]} />
         </mesh>
       ))}
+      {pool && (
+        <group position={[pool.x, 0, pool.z]}>
+          <mesh position={[0, -0.03, 0]} material={materials.stone} receiveShadow>
+            <boxGeometry args={[pool.width + pool.deck * 2, 0.14, pool.depth + pool.deck * 2]} />
+          </mesh>
+          <mesh position={[0, 0.06, 0]} material={water}>
+            <boxGeometry args={[pool.width, 0.08, pool.depth]} />
+          </mesh>
+          {[0, 1, 2].map((step) => (
+            <mesh key={step} position={[-pool.width / 2 + 0.35 + step * 0.32, 0.02 - step * 0.05, -pool.depth / 2 + 0.5]} material={materials.stone} receiveShadow>
+              <boxGeometry args={[0.32, 0.05 + step * 0.1, 1.0]} />
+            </mesh>
+          ))}
+          {night && (
+            <>
+              <mesh position={[-pool.width / 2 + 0.05, 0.02, 0]} material={light}>
+                <boxGeometry args={[0.04, 0.1, pool.depth * 0.55]} />
+              </mesh>
+              <mesh position={[pool.width / 2 - 0.05, 0.02, 0]} material={light}>
+                <boxGeometry args={[0.04, 0.1, pool.depth * 0.55]} />
+              </mesh>
+            </>
+          )}
+        </group>
+      )}
       <mesh position={[plan.widthM * 0.3, 2.6, -plan.depthM * 0.9]} material={materials.plant} castShadow>
         <icosahedronGeometry args={[2.2, 1]} />
       </mesh>
@@ -277,6 +338,12 @@ export interface InteriorSceneProps {
   focusRoomId: string | null;
   walkMode: boolean;
   showFurniture: boolean;
+  showAppliances?: boolean;
+  /** Continuous 360° orbit around the selected focus. */
+  spin?: boolean;
+  timeOfDay?: "day" | "night";
+  /** Private pool of this unit, rendered in the garden when present. */
+  pool?: PoolSpec | null;
   quality?: "low" | "high";
   onRoomSelect?: (room: PlanRoom) => void;
 }
@@ -286,6 +353,10 @@ export function InteriorScene({
   focusRoomId,
   walkMode,
   showFurniture,
+  showAppliances = true,
+  spin = false,
+  timeOfDay = "day",
+  pool = null,
   quality = "high",
 }: InteriorSceneProps) {
   const plan = React.useMemo(() => getFloorPlan(typology), [typology]);
@@ -307,13 +378,14 @@ export function InteriorScene({
   }, [focusRoomId, plan.rooms]);
 
   const cutaway = !walkMode;
+  const night = timeOfDay === "night";
 
   return (
     <>
-      <color attach="background" args={["#cfd6d2"]} />
-      <fog attach="fog" args={["#cfd6d2", 60, 160]} />
-      <InteriorLighting plan={plan} quality={quality} />
-      <Garden plan={plan} materials={materials} />
+      <color attach="background" args={[night ? "#141a22" : "#cfd6d2"]} />
+      <fog attach="fog" args={[night ? "#141a22" : "#cfd6d2", night ? 40 : 60, night ? 130 : 160]} />
+      <InteriorLighting plan={plan} quality={quality} night={night} />
+      <Garden plan={plan} materials={materials} pool={pool} night={night} />
       <RoomFloors plan={plan} materials={materials} />
       <Walls plan={plan} cutaway={cutaway} materials={materials} />
       <Openings plan={plan} cutaway={cutaway} materials={materials} />
@@ -321,7 +393,7 @@ export function InteriorScene({
       {showFurniture && (
         <group>
           {plan.furniture.map((piece) => (
-            <Furniture3D key={piece.id} piece={piece} />
+            <Furniture3D key={piece.id} piece={piece} showAppliances={showAppliances} />
           ))}
         </group>
       )}
@@ -334,6 +406,8 @@ export function InteriorScene({
         maxPolarAngle={walkMode ? 1.52 : Math.PI / 2.2}
         minPolarAngle={walkMode ? 0.9 : 0.15}
         target={[0, walkMode ? 1.35 : 0.4, 0]}
+        autoRotate={spin}
+        autoRotateSpeed={1.1}
         makeDefault
       />
       <CameraRig plan={plan} focus={focus} walkMode={walkMode} controlsRef={controlsRef} />

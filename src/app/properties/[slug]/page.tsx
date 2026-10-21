@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, ArrowUpRight, Bath, BedDouble, Car, Ruler, Trees } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Bath, BedDouble, Car, ChefHat, Ruler, Trees, Waves } from "lucide-react";
 import { getDb } from "@/lib/db";
 import { getPropertyBySlug, getSettings, listPropertyMedia, listPublicProperties } from "@/lib/db/repositories";
 import { getSession } from "@/lib/auth/session";
@@ -11,6 +11,7 @@ import { SiteFooter } from "@/components/public/SiteFooter";
 import { FloorPlan2D, PlanLegend } from "@/components/plan/FloorPlan2D";
 import { StatusBadge, PublicationBadge } from "@/components/ui/badge";
 import { InteriorLauncher } from "@/components/public/InteriorLauncher";
+import { poolFor } from "@/lib/3d/site";
 import { VisitForm } from "@/components/public/forms";
 import { TYPOLOGY_CATALOGUE } from "@/lib/domain/constants";
 import { formatArea, formatCurrency, typologyHeadline } from "@/lib/format";
@@ -35,6 +36,7 @@ export default async function PropertyPage({ params }: { params: Promise<{ slug:
   const property = await getPropertyBySlug(db, slug);
   if (!property || property.publication === "archived") notFound();
   const viewable = property.publication === "published" && property.status !== "hidden";
+  const pool = poolFor(property.code, property.typology);
   const session = await getSession();
   if (!viewable && !session) notFound();
 
@@ -109,6 +111,8 @@ export default async function PropertyPage({ params }: { params: Promise<{ slug:
                   { icon: Bath, label: "Bathrooms", value: String(property.bathrooms) },
                   { icon: Car, label: "Parking", value: property.parkingSpaces ? `${property.parkingSpaces}` : "—" },
                   { icon: Ruler, label: "Plot", value: formatArea(property.plotAreaM2) },
+                  { icon: Waves, label: "Private pool", value: pool ? `${pool.width.toFixed(1)} × ${pool.depth.toFixed(1)} m` : "—" },
+                  { icon: ChefHat, label: "Kitchen", value: "Equipped" },
                 ].map((stat) => (
                   <div key={stat.label} className="bg-[#fbfbf8] px-4 py-3">
                     <dt className="flex items-center gap-1.5 label-micro text-ink-400">
@@ -120,6 +124,23 @@ export default async function PropertyPage({ params }: { params: Promise<{ slug:
               </dl>
 
               <p className="mt-6 text-sm leading-relaxed text-ink-600">{property.description}</p>
+
+              <div className="mt-5 rounded-md border border-ink-900/10 bg-[#fbfbf8] px-4 py-3">
+                <p className="label-micro text-ink-400">Every home is delivered with</p>
+                <ul className="mt-2 flex flex-wrap gap-1.5">
+                  {[
+                    "Private walled plot",
+                    pool ? "Private pool and deck" : "Landscaped private garden",
+                    "Equipped kitchen: fridge, induction hob, oven, extractor, dishwasher, microwave",
+                    "Laundry: washer / dryer",
+                    "Outdoor parking",
+                  ].map((item) => (
+                    <li key={item} className="rounded-full border border-moss-300/60 bg-moss-100/60 px-2.5 py-1 text-[0.68rem] text-moss-800">
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
 
               {property.features.length > 0 && (
                 <div className="mt-5">

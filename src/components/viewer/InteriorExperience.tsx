@@ -4,9 +4,10 @@ import * as React from "react";
 import Link from "next/link";
 import { Canvas } from "@react-three/fiber";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowLeft, Armchair, BedDouble, CookingPot, Maximize2, Sofa, Square, Trees, Utensils, Bath } from "lucide-react";
+import { ArrowLeft, Armchair, Bath, BedDouble, CookingPot, Maximize2, Moon, Refrigerator, RotateCw, Sofa, Square, Sun, Trees, Utensils, Waves } from "lucide-react";
 import type { Property } from "@/lib/domain/types";
 import { getFloorPlan } from "@/lib/domain/floorplans";
+import { poolFor } from "@/lib/3d/site";
 import { cn } from "@/lib/utils";
 import { InteriorScene } from "@/components/three/InteriorScene";
 
@@ -54,14 +55,27 @@ const ROOM_ICONS: Record<string, React.ComponentType<{ className?: string }>> = 
 export interface InteriorExperienceProps {
   property: Property;
   isAdmin?: boolean;
+  /** Inherit the day/night choice made on the masterplan. */
+  timeOfDay?: "day" | "night";
+  onTimeOfDayChange?: (value: "day" | "night") => void;
   onClose: () => void;
 }
 
-export function InteriorExperience({ property, isAdmin = false, onClose }: InteriorExperienceProps) {
+export function InteriorExperience({
+  property,
+  isAdmin = false,
+  timeOfDay: initialTimeOfDay = "day",
+  onTimeOfDayChange,
+  onClose,
+}: InteriorExperienceProps) {
   const plan = React.useMemo(() => getFloorPlan(property.typology), [property.typology]);
+  const pool = React.useMemo(() => poolFor(property.code, property.typology), [property.code, property.typology]);
   const [walkMode, setWalkMode] = React.useState(false);
   const [focusRoomId, setFocusRoomId] = React.useState<string | null>(null);
   const [showFurniture, setShowFurniture] = React.useState(true);
+  const [showAppliances, setShowAppliances] = React.useState(true);
+  const [spin, setSpin] = React.useState(false);
+  const [timeOfDay, setTimeOfDay] = React.useState<"day" | "night">(initialTimeOfDay);
   const [ready, setReady] = React.useState(false);
   const [failed, setFailed] = React.useState(false);
   const [quality, setQuality] = React.useState<"low" | "high">("high");
@@ -101,6 +115,10 @@ export function InteriorExperience({ property, isAdmin = false, onClose }: Inter
                 focusRoomId={focusRoomId}
                 walkMode={walkMode}
                 showFurniture={showFurniture}
+                showAppliances={showAppliances}
+                spin={spin}
+                timeOfDay={timeOfDay}
+                pool={pool}
                 quality={quality}
               />
             </React.Suspense>
@@ -126,7 +144,14 @@ export function InteriorExperience({ property, isAdmin = false, onClose }: Inter
             Condominium
           </button>
           <div>
-            <p className="label-micro text-ink-500">{property.code} · {property.typology} · Interior prototype</p>
+            <p className="label-micro text-ink-500">
+              {property.code} · {property.typology} · Interior prototype
+            </p>
+            {pool && (
+              <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-clay-500/50 bg-clay-500/15 px-2 py-0.5 text-[0.6rem] font-medium text-clay-700">
+                <Waves className="h-3 w-3" aria-hidden /> Private pool
+              </span>
+            )}
             <p className="display mt-1 text-[1.55rem] leading-none text-obsidian">{property.title}</p>
           </div>
         </div>
@@ -152,12 +177,52 @@ export function InteriorExperience({ property, isAdmin = false, onClose }: Inter
           </div>
           <button
             type="button"
+            onClick={() => setSpin((v) => !v)}
+            className={cn(
+              "inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[0.7rem] font-medium shadow-sm backdrop-blur transition",
+              spin ? "border-obsidian bg-obsidian text-porcelain" : "border-white/60 bg-white/85 text-ink-600 hover:bg-white",
+            )}
+            aria-pressed={spin}
+          >
+            <RotateCw className={cn("h-3.5 w-3.5", spin && "animate-spin [animation-duration:3s]")} aria-hidden /> 360°
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const next = timeOfDay === "day" ? "night" : "day";
+              setTimeOfDay(next);
+              onTimeOfDayChange?.(next);
+            }}
+            className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/60 bg-white/85 px-3 text-[0.7rem] font-medium text-ink-600 shadow-sm backdrop-blur transition hover:bg-white"
+            aria-pressed={timeOfDay === "night"}
+            aria-label={timeOfDay === "day" ? "Switch to night lighting" : "Switch to daylight"}
+          >
+            {timeOfDay === "day" ? <Moon className="h-3.5 w-3.5" aria-hidden /> : <Sun className="h-3.5 w-3.5" aria-hidden />}
+            {timeOfDay === "day" ? "Night" : "Day"}
+          </button>
+          <button
+            type="button"
             onClick={() => setShowFurniture((v) => !v)}
             className="inline-flex h-8 items-center rounded-full border border-white/60 bg-white/85 px-3 text-[0.7rem] font-medium text-ink-600 shadow-sm backdrop-blur transition hover:bg-white"
             aria-pressed={!showFurniture}
           >
             {showFurniture ? "Hide furniture" : "Show furniture"}
           </button>
+          {showFurniture && (
+            <button
+              type="button"
+              onClick={() => setShowAppliances((v) => !v)}
+              className={cn(
+                "inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[0.7rem] font-medium shadow-sm backdrop-blur transition",
+                showAppliances ? "border-white/60 bg-white/85 text-ink-600 hover:bg-white" : "border-ink-900/20 bg-ink-900/10 text-ink-500",
+              )}
+              aria-pressed={showAppliances}
+              title="Fridge, oven, hob, extractor, dishwasher, microwave, washer"
+            >
+              <Refrigerator className="h-3.5 w-3.5" aria-hidden />
+              {showAppliances ? "Appliances on" : "Appliances off"}
+            </button>
+          )}
           {isAdmin && (
             <Link
               href={`/admin/properties/${property.id}`}
@@ -208,8 +273,9 @@ export function InteriorExperience({ property, isAdmin = false, onClose }: Inter
           </div>
           <div className="flex flex-wrap items-end justify-between gap-3">
             <p className="max-w-md text-[0.62rem] leading-relaxed text-ink-500">
-              Prototype interior · ground floor only · generated from the plan, not an architectural model. Upper floor and
-              finishes are illustrative. Room view uses orbit navigation constrained to the room.
+              Prototype interior · ground floor only · generated from the plan, not an architectural model. Room view keeps the
+              orbit inside the room; 360° keeps the camera circling so you can read the whole space. Appliances are
+              indicative: fridge, induction hob, oven, extractor, dishwasher, microwave and washer where the plan allows.
             </p>
             <AnimatePresence>
               {walkMode && (
@@ -219,7 +285,7 @@ export function InteriorExperience({ property, isAdmin = false, onClose }: Inter
                   exit={{ opacity: 0 }}
                   className="rounded-full bg-obsidian/80 px-3 py-1.5 text-[0.62rem] text-porcelain backdrop-blur"
                 >
-                  Drag to look around · scroll to move closer
+                  Drag to look around · scroll to move closer · 360° for a full turn
                 </motion.p>
               )}
             </AnimatePresence>

@@ -70,6 +70,16 @@ procedural geometry). Nothing is a survey, a photograph of a real home, or a bin
 | Media & assets    | Photography per home, GLB model pipeline with validation and publication gates    |
 | Settings          | Contact details, currency, viewing rules, retention, team roles, activity log     |
 
+### The 3D experience
+
+The masterplan is a full procedural site (108 × 104 m, fenced, one gate). Every home sits in a
+private walled plot with a driveway; eight of the thirteen have a pool and deck, the rest a walled
+garden. Clicking a house eases the camera into a nine-second 360° orbit and then lets you orbit
+freely, and a day/night switch retints sky, lighting, stars, glass and pool water across the site
+and the interiors. The interiors are furnished and delivered with a kitchen and laundry appliance
+pack (fridge, induction hob, oven, extractor, dishwasher, microwave, washer/dryer), which can be
+toggled and is listed on each property page.
+
 Availability (`available`, `reserved`, `sold`, `hidden`) and visibility (`draft`, `published`,
 `archived`) are deliberately independent. Archiving never deletes commercial history, and a
 reservation records who reserved, until when, and the deposit.

@@ -4,6 +4,7 @@ import * as React from "react";
 import * as THREE from "three";
 import type { FurniturePiece } from "@/lib/domain/floorplans";
 import { getInteriorMaterials } from "./materials";
+import { Fridge, KitchenApplianceSet, Washer as WasherAppliance } from "./Appliances3D";
 
 /**
  * Furniture prototype built from simple, well-proportioned primitives.
@@ -135,7 +136,7 @@ function DiningChairs({ width, depth }: { width: number; depth: number }) {
   );
 }
 
-function KitchenRun({ width, depth }: { width: number; depth: number }) {
+function KitchenRun({ width, depth, showAppliances = true }: { width: number; depth: number; showAppliances?: boolean }) {
   const m = getInteriorMaterials();
   return (
     <group>
@@ -147,8 +148,6 @@ function KitchenRun({ width, depth }: { width: number; depth: number }) {
       <Box size={[Math.min(0.62, width * 0.3), 0.02, depth * 0.62]} position={[-width * 0.24, 0.875, 0.02]} material={m.steel} />
       <Cylinder args={[0.018, 0.018, 0.32, 8]} position={[-width * 0.24, 1.02, -depth * 0.18]} material={m.steel} />
       <Box size={[0.2, 0.02, 0.02]} position={[-width * 0.24, 1.17, -depth * 0.1]} material={m.steel} />
-      {/* hob */}
-      <Box size={[Math.min(0.6, width * 0.3), 0.012, depth * 0.6]} position={[width * 0.22, 0.875, 0.02]} material={m.charcoal} />
       {/* handles */}
       {Array.from({ length: Math.max(2, Math.round(width / 0.7)) }, (_, i) => {
         const handles = Math.max(2, Math.round(width / 0.7));
@@ -162,6 +161,7 @@ function KitchenRun({ width, depth }: { width: number; depth: number }) {
           />
         );
       })}
+      {showAppliances && <KitchenApplianceSet width={width} depth={depth} />}
     </group>
   );
 }
@@ -320,17 +320,6 @@ function Plant({ scale = 1 }: { scale?: number }) {
   );
 }
 
-function Washer() {
-  const m = getInteriorMaterials();
-  return (
-    <group>
-      <Box size={[0.62, 0.85, 0.6]} position={[0, 0.425, 0]} material={m.porcelain} />
-      <Cylinder args={[0.2, 0.2, 0.02, 20]} position={[0, 0.48, 0.31]} material={m.steel} rotation={[Math.PI / 2, 0, 0]} />
-      <Box size={[0.56, 0.08, 0.02]} position={[0, 0.8, 0.3]} material={m.charcoal} castShadow={false} />
-    </group>
-  );
-}
-
 function Desk({ width, depth }: { width: number; depth: number }) {
   const m = getInteriorMaterials();
   return (
@@ -383,7 +372,7 @@ function Nightstand() {
   );
 }
 
-export function Furniture3D({ piece }: { piece: FurniturePiece }) {
+export function Furniture3D({ piece, showAppliances = true }: { piece: FurniturePiece; showAppliances?: boolean }) {
   const m = getInteriorMaterials();
   const { width, depth } = piece;
   const content = (() => {
@@ -401,11 +390,11 @@ export function Furniture3D({ piece }: { piece: FurniturePiece }) {
       case "diningChairs":
         return <DiningChairs width={width} depth={depth} />;
       case "kitchenRun":
-        return <KitchenRun width={width} depth={depth} />;
+        return <KitchenRun width={width} depth={depth} showAppliances={showAppliances} />;
       case "kitchenIsland":
         return <KitchenIsland width={width} depth={depth} />;
       case "kitchenTower":
-        return <Wardrobe width={width} depth={depth} />;
+        return showAppliances ? <Fridge width={width} depth={depth} /> : <Wardrobe width={width} depth={depth} />;
       case "bed":
         return <Bed width={width} depth={depth} />;
       case "nightstand":
@@ -432,7 +421,7 @@ export function Furniture3D({ piece }: { piece: FurniturePiece }) {
       case "vanity":
         return <Vanity width={width} />;
       case "washer":
-        return <Washer />;
+        return showAppliances ? <WasherAppliance width={width} depth={depth} /> : null;
       case "shelf":
         return <Shelf width={width} depth={depth} />;
       case "plant":

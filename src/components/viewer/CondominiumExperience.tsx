@@ -8,13 +8,14 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
-import { ArrowRight, CalendarDays, Layers, Maximize2, RotateCcw, Sparkles, X, Boxes, Info } from "lucide-react";
+import { ArrowRight, CalendarDays, Layers, Maximize2, Moon, RotateCcw, RotateCw, Sparkles, Sun, X, Boxes, Info, Waves } from "lucide-react";
 import type { AppSettings, Property, PropertyMedia, PropertyPosition, PropertyStatus, Typology } from "@/lib/domain/types";
 import { PROPERTY_STATUS_LABELS, TYPOLOGIES, TYPOLOGY_CATALOGUE } from "@/lib/domain/constants";
 import { formatArea, formatCurrency, typologyHeadline } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { SiteScene } from "@/components/three/SiteScene";
 import { FloorPlan2D, PlanLegend } from "@/components/plan/FloorPlan2D";
+import { poolFor } from "@/lib/3d/site";
 
 const InteriorExperience = dynamic(() => import("@/components/viewer/InteriorExperience").then((m) => m.InteriorExperience), {
   ssr: false,
@@ -55,32 +56,62 @@ class CanvasBoundary extends React.Component<{ children: React.ReactNode; fallba
   }
 }
 
-/** Smooth camera transitions with bounded targets. */
+/**
+ * Camera behaviour for the masterplan.
+ *
+ * Selecting a house flies the camera in and then performs one full 360° orbit so
+ * the unit is understood in the round rather than from a single angle. Any drag
+ * hands control back to the visitor immediately; the "360°" control replays it.
+ */
 function CameraRig({
   focus,
   mode,
   resetToken,
+  orbitToken,
 }: {
   focus: { x: number; z: number; size: number } | null;
   mode: "site" | "plan";
   resetToken: number;
+  orbitToken: number;
 }) {
   const { camera } = useThree();
-  const controls = useThree((state) => state.controls) as { target: THREE.Vector3; update: () => void } | null;
-  const destination = React.useRef(new THREE.Vector3(62, 52, 88));
+  const gl = useThree((state) => state.gl);
+  const controls = useThree((state) => state.controls) as (THREE.EventDispatcher & {
+    target: THREE.Vector3;
+    update: () => void;
+    enabled: boolean;
+  }) | null;
+  const destination = React.useRef(new THREE.Vector3(70, 58, 100));
   const lookAt = React.useRef(new THREE.Vector3(0, 2, 4));
   const animating = React.useRef(false);
+  const orbit = React.useRef<{
+    center: THREE.Vector3;
+    radius: number;
+    height: number;
+    startRadius: number;
+    startHeight: number;
+    startAngle: number;
+    startedAt: number;
+    duration: number;
+  } | null>(null);
+
+  const stopOrbit = React.useCallback(() => {
+    orbit.current = null;
+    if (controls) controls.enabled = true;
+  }, [controls]);
 
   React.useEffect(() => {
     if (mode === "plan") {
+      orbit.current = null;
+      if (controls) controls.enabled = true;
       const centerX = focus?.x ?? 0;
       const centerZ = focus?.z ?? 4;
       lookAt.current.set(centerX, 0, centerZ);
-      destination.current.set(centerX, 86, centerZ + 0.01);
+      destination.current.set(centerX, 98, centerZ + 0.01);
     } else if (focus) {
       const size = focus.size;
-      const distance = 16 + size * 7;
-      const height = 8 + size * 1.6;
+      const distance = 13 + size * 5.2;
+      const height = 6 + size * 2.1;
       const dirX = focus.x === 0 && focus.z === 0 ? 0.35 : focus.x;
       const dirZ = focus.z === 0 ? 1 : focus.z;
       const length = Math.hypot(dirX, dirZ) || 1;
@@ -90,12 +121,26 @@ function CameraRig({
         height,
         focus.z + (dirZ / length) * distance * 0.75 + 2.4,
       );
+      const center = new THREE.Vector3(focus.x, 2.2, focus.z);
+      orbit.current = {
+        center,
+        radius: Math.max(9, distance),
+        height: Math.max(5.5, height * 0.82),
+        startRadius: Math.max(4, camera.position.distanceTo(center)),
+        startHeight: camera.position.y,
+        startAngle: Math.atan2(camera.position.z - focus.z, camera.position.x - focus.x),
+        startedAt: performance.now(),
+        duration: 9000,
+      };
+      if (controls) controls.enabled = false;
     } else {
+      orbit.current = null;
+      if (controls) controls.enabled = true;
       lookAt.current.set(0, 2, 4);
-      destination.current.set(62, 52, 88);
+      destination.current.set(70, 58, 100);
     }
     animating.current = true;
-  }, [focus, mode, resetToken]);
+  }, [focus, mode, resetToken, orbitToken, camera, controls]);
 
   React.useEffect(() => {
     if (!controls) return;
@@ -104,7 +149,42 @@ function CameraRig({
     }
   }, [controls, mode, focus]);
 
+  // A deliberate drag cancels the tour; the visitor is always in charge.
+  React.useEffect(() => {
+    const element = gl.domElement;
+    const cancel = () => stopOrbit();
+    element.addEventListener("pointerdown", cancel);
+    element.addEventListener("wheel", cancel, { passive: true });
+    return () => {
+      element.removeEventListener("pointerdown", cancel);
+      element.removeEventListener("wheel", cancel);
+    };
+  }, [gl, stopOrbit]);
+
   useFrame((_, delta) => {
+    if (orbit.current) {
+      const tour = orbit.current;
+      const progress = Math.min(1, (performance.now() - tour.startedAt) / tour.duration);
+      const eased = progress * progress * (3 - 2 * progress);
+      // Ease the radius/height in during the first third so the tour starts from
+      // wherever the visitor was standing instead of snapping to the circle.
+      const approach = Math.min(1, progress / 0.32);
+      const approachEased = approach * approach * (3 - 2 * approach);
+      const radius = tour.startRadius + (tour.radius - tour.startRadius) * approachEased;
+      const height = tour.startHeight + (tour.height - tour.startHeight) * approachEased;
+      const angle = tour.startAngle + eased * Math.PI * 2;
+      camera.position.set(
+        tour.center.x + Math.cos(angle) * radius,
+        height + Math.sin(progress * Math.PI) * radius * 0.16,
+        tour.center.z + Math.sin(angle) * radius,
+      );
+      camera.lookAt(tour.center);
+      if (controls) {
+        controls.target.copy(tour.center);
+      }
+      if (progress >= 1) stopOrbit();
+      return;
+    }
     if (!animating.current) return;
     const alpha = 1 - Math.exp(-4.5 * Math.min(delta, 0.1));
     camera.position.lerp(destination.current, alpha);
@@ -114,6 +194,8 @@ function CameraRig({
     }
     if (camera.position.distanceTo(destination.current) < 0.2) animating.current = false;
   });
+
+  React.useEffect(() => () => stopOrbit(), [stopOrbit]);
 
   return null;
 }
@@ -173,6 +255,8 @@ export function CondominiumExperience({ entries, settings, isAdmin = false, clas
   const [statusFilter, setStatusFilter] = React.useState<"all" | PropertyStatus>("all");
   const [mode, setMode] = React.useState<"site" | "plan">("site");
   const [resetToken, setResetToken] = React.useState(0);
+  const [orbitToken, setOrbitToken] = React.useState(0);
+  const [timeOfDay, setTimeOfDay] = React.useState<"day" | "night">("day");
   const [ready, setReady] = React.useState(false);
   const [interiorOpen, setInteriorOpen] = React.useState(false);
   const [showFilters, setShowFilters] = React.useState(false);
@@ -209,16 +293,27 @@ export function CondominiumExperience({ entries, settings, isAdmin = false, clas
     return { x: selectedEntry.position.publishedX, z: selectedEntry.position.publishedZ, size };
   }, [selectedEntry, mode]);
 
+  const selectedPool = React.useMemo(
+    () => (selected ? poolFor(selected.code, selected.typology) : null),
+    [selected],
+  );
+
   const handleSelect = React.useCallback((id: string) => {
     setSelectedId(id);
     setMode("site");
     setPanelTab("overview");
+    setOrbitToken((token) => token + 1);
   }, []);
 
   const handleReset = React.useCallback(() => {
     setSelectedId(null);
     setMode("site");
     setResetToken((t) => t + 1);
+  }, []);
+
+  const replayOrbit = React.useCallback(() => {
+    setMode("site");
+    setOrbitToken((token) => token + 1);
   }, []);
 
   React.useEffect(() => {
@@ -270,6 +365,7 @@ export function CondominiumExperience({ entries, settings, isAdmin = false, clas
                 hoveredId={hoveredId}
                 visibleIds={visibleIds}
                 lowQuality={lowQuality}
+                timeOfDay={timeOfDay}
                 onSelect={handleSelect}
                 onHover={setHoveredId}
               />
@@ -287,7 +383,7 @@ export function CondominiumExperience({ entries, settings, isAdmin = false, clas
               zoomSpeed={0.8}
               panSpeed={0.7}
             />
-            <CameraRig focus={focus} mode={mode} resetToken={resetToken} />
+            <CameraRig focus={focus} mode={mode} resetToken={resetToken} orbitToken={orbitToken} />
           </Canvas>
         </CanvasBoundary>
       )}
@@ -315,6 +411,16 @@ export function CondominiumExperience({ entries, settings, isAdmin = false, clas
             <CalendarDays className="h-3.5 w-3.5" aria-hidden />
             Book a visit
           </Link>
+          <button
+            type="button"
+            onClick={() => setTimeOfDay((value) => (value === "day" ? "night" : "day"))}
+            aria-pressed={timeOfDay === "night"}
+            aria-label={timeOfDay === "day" ? "Switch the masterplan to night" : "Switch the masterplan to daylight"}
+            className="inline-flex h-9 items-center gap-1.5 rounded-full border border-white/60 bg-white/70 px-3 text-[0.72rem] font-medium text-ink-700 backdrop-blur transition hover:bg-white"
+          >
+            {timeOfDay === "day" ? <Moon className="h-3.5 w-3.5" aria-hidden /> : <Sun className="h-3.5 w-3.5" aria-hidden />}
+            <span className="hidden sm:inline">{timeOfDay === "day" ? "Night" : "Day"}</span>
+          </button>
           <Link
             href={isAdmin ? "/admin" : "/login"}
             className="hidden h-9 items-center rounded-full border border-white/60 bg-white/70 px-4 text-[0.78rem] font-medium text-ink-700 backdrop-blur transition hover:bg-white sm:inline-flex"
@@ -433,6 +539,15 @@ export function CondominiumExperience({ entries, settings, isAdmin = false, clas
             </div>
             <button
               type="button"
+              onClick={replayOrbit}
+              className="inline-flex h-9 items-center gap-1.5 rounded-full border border-white/60 bg-white/80 px-3 text-[0.7rem] font-medium text-ink-600 shadow-sm backdrop-blur transition hover:bg-white"
+              title="Orbit the selected residence through a full turn"
+            >
+              <RotateCw className="h-3.5 w-3.5" aria-hidden />
+              <span className="hidden sm:inline">360°</span>
+            </button>
+            <button
+              type="button"
               onClick={handleReset}
               className="inline-flex h-9 items-center gap-1.5 rounded-full border border-white/60 bg-white/80 px-3 text-[0.7rem] font-medium text-ink-600 shadow-sm backdrop-blur transition hover:bg-white"
             >
@@ -452,7 +567,7 @@ export function CondominiumExperience({ entries, settings, isAdmin = false, clas
 
         <div className="flex items-center justify-between gap-4 text-[0.62rem] text-ink-500">
           <p className="max-w-md leading-relaxed">
-            Demonstration data · Prototype 3D · Drag to orbit, scroll to zoom, right-drag to pan.
+            Demonstration data · Prototype 3D · Click a house for a 360° walk-around · drag to orbit, scroll to zoom.
           </p>
           <p className="hidden shrink-0 items-center gap-1.5 sm:flex">
             <Info className="h-3 w-3" aria-hidden />
@@ -563,6 +678,20 @@ export function CondominiumExperience({ entries, settings, isAdmin = false, clas
                   </dl>
                   <p className="mt-4 text-[0.82rem] leading-relaxed text-ink-600">{selected.description}</p>
                   <p className="mt-3 label-micro text-ink-400">Typology {selected.typology} · {TYPOLOGY_CATALOGUE[selected.typology].character}</p>
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    <span className="inline-flex items-center gap-1 rounded-full border border-ink-900/12 bg-white/70 px-2.5 py-1 text-[0.66rem] text-ink-600">
+                      <Layers className="h-3 w-3" aria-hidden /> Private plot with boundary walls
+                    </span>
+                    {selectedPool ? (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-clay-500/40 bg-clay-500/15 px-2.5 py-1 text-[0.66rem] text-clay-700">
+                        <Waves className="h-3 w-3" aria-hidden /> Private pool {selectedPool.width.toFixed(1)} × {selectedPool.depth.toFixed(1)} m
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-ink-900/12 bg-white/70 px-2.5 py-1 text-[0.66rem] text-ink-600">
+                        <Waves className="h-3 w-3" aria-hidden /> Garden, no pool
+                      </span>
+                    )}
+                  </div>
                   <div className="mt-4 flex flex-wrap gap-1.5">
                     {selected.features.slice(0, 6).map((feature) => (
                       <span key={feature} className="rounded-full border border-ink-900/12 bg-white/70 px-2.5 py-1 text-[0.66rem] text-ink-600">
@@ -644,6 +773,8 @@ export function CondominiumExperience({ entries, settings, isAdmin = false, clas
             <InteriorExperience
               property={selected}
               isAdmin={isAdmin}
+              timeOfDay={timeOfDay}
+              onTimeOfDayChange={setTimeOfDay}
               onClose={() => setInteriorOpen(false)}
             />
           </motion.div>
