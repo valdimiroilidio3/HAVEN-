@@ -16,6 +16,8 @@ import { cn } from "@/lib/utils";
 import { SiteScene } from "@/components/three/SiteScene";
 import { TelemetrySampler } from "@/components/three/TelemetrySampler";
 import { PerformancePanel } from "@/components/viewer/PerformancePanel";
+import { HOUSE_CONFIG, houseHeaderHeight } from "@/components/three/house-geometry";
+import { footprintFor, houseFrame, type ViewName } from "@/lib/3d/framing";
 import { FloorPlan2D, PlanLegend } from "@/components/plan/FloorPlan2D";
 import { poolFor } from "@/lib/3d/site";
 
@@ -71,7 +73,7 @@ function CameraRig({
   resetToken,
   orbitToken,
 }: {
-  focus: { x: number; z: number; size: number } | null;
+  focus: { x: number; z: number; rotationY: number; typology: Typology; view?: ViewName } | null;
   mode: "site" | "plan";
   resetToken: number;
   orbitToken: number;
@@ -112,23 +114,26 @@ function CameraRig({
       lookAt.current.set(centerX, 0, centerZ);
       destination.current.set(centerX, focus ? 96 : 132, centerZ + 0.01);
     } else if (focus) {
-      const size = focus.size;
-      const distance = 13 + size * 5.2;
-      const height = 6 + size * 2.1;
-      const dirX = focus.x === 0 && focus.z === 0 ? 0.35 : focus.x;
-      const dirZ = focus.z === 0 ? 1 : focus.z;
-      const length = Math.hypot(dirX, dirZ) || 1;
-      lookAt.current.set(focus.x, 2.2, focus.z);
-      destination.current.set(
-        focus.x + (dirX / length) * distance * 0.75 + 2.4,
-        height,
-        focus.z + (dirZ / length) * distance * 0.75 + 2.4,
-      );
-      const center = new THREE.Vector3(focus.x, 2.2, focus.z);
+      // Framing is computed from the house's own bounds and facing (see
+      // lib/3d/framing.ts). The old rig derived the view direction from the
+      // house's world coordinates, so north-row homes were shot from behind.
+      const headerHeight = houseHeaderHeight(HOUSE_CONFIG[focus.typology]!);
+      const frame = houseFrame({
+        position: { x: focus.x, z: focus.z },
+        rotationY: focus.rotationY,
+        footprint: footprintFor(focus.typology, headerHeight),
+        fov: 36,
+        view: focus.view ?? "hero",
+      });
+      lookAt.current.set(frame.target.x, frame.target.y, frame.target.z);
+      destination.current.set(frame.position.x, frame.position.y, frame.position.z);
+      const distance = Math.hypot(frame.position.x - focus.x, frame.position.z - focus.z);
+      const height = frame.position.y;
+      const center = new THREE.Vector3(frame.target.x, frame.target.y, frame.target.z);
       orbit.current = {
         center,
-        radius: Math.max(9, distance),
-        height: Math.max(5.5, height * 0.82),
+        radius: Math.max(12, distance * 1.18),
+        height: Math.max(6.5, height * 0.9),
         startRadius: Math.max(4, camera.position.distanceTo(center)),
         startHeight: camera.position.y,
         startAngle: Math.atan2(camera.position.z - focus.z, camera.position.x - focus.x),
@@ -293,8 +298,13 @@ export function CondominiumExperience({ entries, settings, isAdmin = false, clas
 
   const focus = React.useMemo(() => {
     if (!selectedEntry) return null;
-    const size = selectedEntry.property.typology === "T4" ? 2 : selectedEntry.property.typology === "T3" ? 1.6 : 1.2;
-    return { x: selectedEntry.position.publishedX, z: selectedEntry.position.publishedZ, size };
+    return {
+      x: selectedEntry.position.publishedX,
+      z: selectedEntry.position.publishedZ,
+      rotationY: selectedEntry.position.publishedRotationY,
+      typology: selectedEntry.property.typology,
+      view: "hero" as ViewName,
+    };
   }, [selectedEntry, mode]);
 
   const selectedPool = React.useMemo(

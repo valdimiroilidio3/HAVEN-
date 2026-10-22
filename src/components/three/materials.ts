@@ -11,6 +11,8 @@ export interface HavenMaterials {
   charcoal: THREE.MeshStandardMaterial;
   metal: THREE.MeshStandardMaterial;
   glass: THREE.MeshStandardMaterial;
+  /** Dark matte plane behind the glazing: gives windows depth, not a decal. */
+  interior: THREE.MeshStandardMaterial;
   glassRail: THREE.MeshStandardMaterial;
   asphalt: THREE.MeshStandardMaterial;
   grass: THREE.MeshStandardMaterial;
@@ -74,13 +76,23 @@ export function getMaterials(): HavenMaterials {
     timberDark: standard({ color: new THREE.Color("#55402c"), roughness: 0.7 }),
     charcoal: standard({ color: new THREE.Color("#23251f"), roughness: 0.55, metalness: 0.28 }),
     metal: standard({ color: new THREE.Color("#2a2c27"), roughness: 0.32, metalness: 0.82 }),
+    // Architectural glazing, not a mirror. metalness near 0 keeps the glass
+    // reading as glass (a dielectric reflects 4% at normal incidence); the old
+    // 0.92 made every window a black mirror with no depth. Reflections come from
+    // the environment lightformers, which the low roughness keeps sharp.
     glass: standard({
-      color: new THREE.Color("#1f2b2c"),
-      roughness: 0.06,
-      metalness: 0.92,
+      color: new THREE.Color("#243433"),
+      roughness: 0.045,
+      metalness: 0.12,
       transparent: true,
-      opacity: 0.62,
-      envMapIntensity: 1.35,
+      opacity: 0.5,
+      envMapIntensity: 2.1,
+      depthWrite: false,
+    }),
+    interior: standard({
+      color: new THREE.Color("#151612"),
+      roughness: 1,
+      metalness: 0,
     }),
     glassRail: standard({
       color: new THREE.Color("#aebdb7"),

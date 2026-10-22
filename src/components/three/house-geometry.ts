@@ -95,7 +95,34 @@ export const HOUSE_CONFIG: Record<string, HouseConfig> = {
   },
 };
 
+/**
+ * Architectural detail constants.
+ *
+ * One place for every dimension that is *presentation* rather than approved
+ * architecture: wall footprints, storey heights and the floor plans themselves
+ * stay exactly as they are. These numbers only control how the roof sits on the
+ * walls, how far a sill projects, how deep the plinth reads.
+ */
+export const HOUSE_DETAIL = {
+  /** Eave/parapet projection beyond the wall face. */
+  roofOverhang: 0.55,
+  /** Roof field thickness. */
+  roofThickness: 0.2,
+  /** Visible edge band, taller than the field so it reads as a fascia. */
+  fasciaHeight: 0.26,
+  /** Soffit board under the overhang — the shadow line that stops a floating lid. */
+  soffitThickness: 0.055,
+  /** Plinth height above grade and how far it stands proud of the wall. */
+  plinthHeight: 0.22,
+  plinthProjection: 0.08,
+  /** Window sill projection beyond the wall face. */
+  sillProjection: 0.11,
+  /** How far the dark interior backdrop sits behind the glazing. */
+  interiorInset: 0.24,
+} as const;
+
 type GeometryKey =
+  | "interior"
   | "stone"
   | "render"
   | "charcoal"
@@ -154,6 +181,16 @@ function mergeBucket(pieces: Piece[] | undefined): THREE.BufferGeometry | null {
   return merged;
 }
 
+/** Ridge/parapet height above grade: the two storeys plus the roof edge. */
+export function houseHeaderHeight(config: HouseConfig): number {
+  return config.groundH + config.upperH + HOUSE_DETAIL.fasciaHeight;
+}
+
+/** Roof plan extent: walls plus the overhang on both sides. */
+export function roofExtent(plan: FloorPlan): { width: number; depth: number } {
+  return { width: plan.widthM + HOUSE_DETAIL.roofOverhang * 2, depth: plan.depthM + HOUSE_DETAIL.roofOverhang * 2 };
+}
+
 /* ── Ground-floor walls from the plan ─────────────────────────────────── */
 
 function addWalls(bucket: Bucket, plan: FloorPlan, config: HouseConfig) {
@@ -198,6 +235,20 @@ function addOpening(bucket: Bucket, plan: FloorPlan, opening: PlanOpening) {
   // Glass
   add(bucket, "glass", { geometry: box(width, height, 0.025), position: groupPos, rotation: groupRot });
 
+  // Interior backdrop. The walls are built with real holes for the openings, so
+  // a dark panel set back 24 cm gives the glazing depth instead of letting it
+  // read as a decal stuck to the facade.
+  const inward = -outward * (plan.exteriorWallThickness / 2 + HOUSE_DETAIL.interiorInset);
+  // Full-height glazing would carry its backdrop below grade; lift it so the
+  // panel always starts a couple of centimetres above the floor.
+  const backdropH = height + 0.3;
+  const backdropCenter = Math.max(groupPos[1], backdropH / 2 + 0.02);
+  add(bucket, "interior", {
+    geometry: box(width + 0.3, backdropH, 0.02),
+    position: isH ? [groupPos[0], backdropCenter, groupPos[2] + inward] : [groupPos[0] + inward, backdropCenter, groupPos[2]],
+    rotation: groupRot,
+  });
+
   const localToWorld = (lx: number, ly: number, lz: number): [number, number, number] => {
     if (isH) return [groupPos[0] + lx, groupPos[1] + ly, groupPos[2] + lz];
     return [groupPos[0] + lz, groupPos[1] + ly, groupPos[2] - lx];
@@ -217,16 +268,28 @@ function addOpening(bucket: Bucket, plan: FloorPlan, opening: PlanOpening) {
     const x = -width / 2 + (width / mullions) * i;
     addBox(bucket, "charcoal", [0.035, height, depth * 0.75], localToWorld(x, 0, 0), groupRot);
   }
-  // stone sill
+  // Sill: projects beyond the face on the outside, flush inside.
   if (ext.bottom > 0.5) {
+    const sillDepth = plan.exteriorWallThickness + HOUSE_DETAIL.sillProjection * 2;
+    const sillOffset = outward * 0.02;
     addBox(
       bucket,
       "concrete",
-      [width + 0.2, 0.06, plan.exteriorWallThickness + 0.16],
-      [groupPos[0], ext.bottom - 0.03, groupPos[2] + (isH ? 0 : 0)],
+      [width + 0.22, 0.06, sillDepth],
+      isH
+        ? [groupPos[0], ext.bottom - 0.03, groupPos[2] + sillOffset]
+        : [groupPos[0] + sillOffset, ext.bottom - 0.03, groupPos[2]],
       groupRot,
     );
   }
+  // Head: a slim projecting drip keeps rain off the frame and catches a shadow.
+  addBox(
+    bucket,
+    "concrete",
+    [width + 0.26, 0.05, plan.exteriorWallThickness + 0.1],
+    isH ? [groupPos[0], ext.top + 0.03, groupPos[2]] : [groupPos[0], ext.top + 0.03, groupPos[2]],
+    groupRot,
+  );
 }
 
 function addEntranceDoor(bucket: Bucket, plan: FloorPlan, opening: PlanOpening) {
@@ -249,10 +312,27 @@ function addEntranceDoor(bucket: Bucket, plan: FloorPlan, opening: PlanOpening) 
     geometry: new THREE.CapsuleGeometry(0.018, 0.42, 3, 8),
     position: local(width * 0.36, 0, 0.09),
   });
-  // canopy
-  addBox(bucket, "charcoal", [width + 1.5, 0.18, 1.65], local(0, height + 0.55, 0.75), rotation);
-  addBox(bucket, "metal", [0.09, height + 0.5, 0.09], local(-width / 2 - 0.45, 0, 1.4), rotation);
-  addBox(bucket, "metal", [0.09, height + 0.5, 0.09], local(width / 2 + 0.45, 0, 1.4), rotation);
+  // Canopy: a flat slab on two posts. The posts must span grade to the slab
+  // soffit exactly — the previous version was centred on the door midpoint, so
+  // it started 25 cm underground and stopped 30 cm short of the canopy.
+  const canopyY = height + 0.55;
+  const canopyThickness = 0.18;
+  const postTop = canopyY - canopyThickness / 2;
+  const postHeight = postTop;
+  addBox(bucket, "charcoal", [width + 1.5, canopyThickness, 1.65], local(0, canopyY, 0.75), rotation);
+  for (const side of [-1, 1]) {
+    addBox(
+      bucket,
+      "metal",
+      [0.09, postHeight, 0.09],
+      local(side * (width / 2 + 0.45), postTop - postHeight / 2 - height / 2, 1.4),
+      rotation,
+    );
+  }
+  // Threshold apron: the floor and the grade are both at y = 0 here, so this is
+  // flush paving, not a step. It reads as a proper entrance landing and stops the
+  // door meeting the lawn edge-on.
+  addBox(bucket, "stone", [width + 0.7, 0.05, 0.95], local(0, 0.005 - height / 2, 0.45), rotation);
 }
 
 /* ── Upper storey ─────────────────────────────────────────────────────── */
@@ -268,6 +348,9 @@ function addUpper(bucket: Bucket, plan: FloorPlan, config: HouseConfig, seed: nu
   const upperKey: GeometryKey = config.upperMaterial === "timber" ? "timber" : config.upperMaterial === "stone" ? "stone" : "render";
 
   addBox(bucket, upperKey, [W, H, D], [cx, y + H / 2, cz]);
+  // Base reveal: a shadow gap where the upper volume meets the terrace slab, so
+  // the two storeys read as separate volumes rather than one extruded box.
+  addBox(bucket, "charcoal", [W + 0.02, 0.05, D + 0.02], [cx, y + 0.035, cz]);
 
   // Ribbon window (front) + side
   const bandW = W * 0.7;
@@ -299,6 +382,8 @@ function addUpper(bucket: Bucket, plan: FloorPlan, config: HouseConfig, seed: nu
     const width = W * 0.66;
     const slabZ = cz + D / 2 + depth / 2;
     addBox(bucket, "concrete", [width, 0.18, depth], [cx, y + 0.06, slabZ]);
+    // Slab soffit: reads as cast concrete rather than a paper-thin shelf.
+    addBox(bucket, "charcoal", [width - 0.05, 0.04, depth - 0.05], [cx, y - 0.03, slabZ]);
     addBox(bucket, "glassRail", [width, 1.05, 0.035], [cx, y + 0.68, slabZ + depth / 2]);
     addBox(bucket, "metal", [width, 0.05, 0.07], [cx, y + 1.22, slabZ + depth / 2]);
     for (const side of [-1, 1]) {
@@ -308,21 +393,64 @@ function addUpper(bucket: Bucket, plan: FloorPlan, config: HouseConfig, seed: nu
   }
 }
 
+/**
+ * A flat roof, built the way one is built.
+ *
+ * Three parts, in order of what you actually see: a **fascia** (the vertical
+ * edge, taller than the roof field), a **soffit** (the board under the
+ * overhang, which produces the shadow line) and the **field** (the waterproofed
+ * surface, set just below the fascia top so the edge presents a crisp arris).
+ *
+ * The previous version was a single 0.34 m slab overhanging 1.0 m with nothing
+ * under it — from any angle it read as a lid floating above the walls, and the
+ * joinery cast a shadow gap that made the house look unfinished.
+ *
+ * Overhang is `HOUSE_DETAIL.roofOverhang` (0.55 m): enough to weather the facade
+ * and read the parapet, small enough to keep the volume honest. Wall footprints
+ * and storey heights are untouched.
+ */
 function addRoof(bucket: Bucket, plan: FloorPlan, config: HouseConfig) {
+  const O = HOUSE_DETAIL.roofOverhang;
+  const fasciaH = HOUSE_DETAIL.fasciaHeight;
+  const soffit = HOUSE_DETAIL.soffitThickness;
+
+  const flatRoof = (width: number, depth: number, cx: number, cz: number, topY: number) => {
+    const w = width + O * 2;
+    const d = depth + O * 2;
+    // Fascia: the visible edge band.
+    addBox(bucket, "charcoal", [w, fasciaH, d], [cx, topY - fasciaH / 2, cz]);
+    // Field: inset a hair, sitting below the fascia top.
+    addBox(bucket, "charcoal", [w - 0.04, HOUSE_DETAIL.roofThickness, d - 0.04], [cx, topY - fasciaH + HOUSE_DETAIL.roofThickness / 2 - 0.01, cz]);
+    // Soffit under the overhang, flush with the wall face: the shadow line.
+    addBox(bucket, "render", [width + O * 2 - 0.06, soffit, depth + O * 2 - 0.06], [cx, topY - fasciaH - soffit / 2 + 0.01, cz]);
+    // Drip: a lip proud of the fascia, so water leaves the building.
+    addBox(bucket, "charcoal", [w + 0.05, 0.045, d + 0.05], [cx, topY - fasciaH + 0.02, cz]);
+  };
+
   if (!config.upper) {
-    addBox(bucket, "charcoal", [plan.widthM + 2.0, 0.34, plan.depthM + 2.0], [0, config.groundH + 0.13, 0]);
-    addBox(bucket, "render", [plan.widthM + 1.7, 0.09, plan.depthM + 1.7], [0, config.groundH - 0.05, 0]);
+    // Single storey: the roof sits directly on the walls.
+    flatRoof(plan.widthM, plan.depthM, 0, 0, config.groundH + fasciaH);
     return;
   }
-  addBox(bucket, "charcoal", [plan.widthM + 2.2, 0.26, plan.depthM + 2.2], [0, config.groundH + 0.02, 0]);
-  addBox(bucket, "render", [plan.widthM + 2.45, 0.09, plan.depthM + 2.45], [0, config.groundH - 0.12, 0]);
+
+  // Two storeys: the ground floor is capped by a terrace roof that becomes the
+  // first-floor deck, then the upper volume carries its own roof.
+  flatRoof(plan.widthM, plan.depthM, 0, 0, config.groundH + fasciaH * 0.62);
+
   const W = plan.widthM * config.upperW;
   const D = plan.depthM * config.upperD;
   const cx = plan.widthM * config.upperOffsetX;
   const cz = plan.depthM * config.upperOffsetZ;
-  addBox(bucket, "charcoal", [W + 1.6, 0.32, D + 1.6], [cx, config.groundH + config.upperH + 0.12, cz]);
+  const topY = config.groundH + config.upperH + fasciaH;
+  flatRoof(W, D, cx, cz, topY);
+
   if (config.chimney) {
-    addBox(bucket, "charcoal", [0.62, 1.5, 0.62], [cx + W * 0.22, config.groundH + config.upperH + 0.98, cz - D * 0.22]);
+    // Seated in the roof, not floating on it: the shaft starts below the field
+    // and ends with a cap that oversails it.
+    const chimneyX = cx + W * 0.22;
+    const chimneyZ = cz - D * 0.22;
+    addBox(bucket, "render", [0.62, 1.5, 0.62], [chimneyX, topY + 0.6, chimneyZ]);
+    addBox(bucket, "charcoal", [0.74, 0.09, 0.74], [chimneyX, topY + 1.39, chimneyZ]);
   }
 }
 
@@ -335,6 +463,8 @@ function addTerraces(bucket: Bucket, plan: FloorPlan) {
     const cx = (terrace.x1 + terrace.x2) / 2;
     const cz = (terrace.z1 + terrace.z2) / 2;
     addBox(bucket, terrace.deck === "timber" ? "deck" : "gravel", [w, 0.14, d], [cx, 0.07, cz]);
+    // Edge band: without it a 14 cm slab dissolves into the lawn.
+    addBox(bucket, "charcoal", [w + 0.04, 0.05, d + 0.04], [cx, 0.025, cz]);
   }
 }
 
@@ -370,7 +500,15 @@ function addPergola(bucket: Bucket, plan: FloorPlan, config: HouseConfig) {
 export function buildHouseGeometry(plan: FloorPlan, config: HouseConfig, seed = 1): HouseGeometrySet {
   const bucket: Bucket = {};
 
-  addBox(bucket, "stone", [plan.widthM + 0.9, 0.16, plan.depthM + 0.9], [0, 0.02, 0]);
+  // Plinth: stands 22 cm proud of grade and 8 cm proud of the wall, so the house
+  // meets the ground through a base instead of being pasted onto it.
+  const P = HOUSE_DETAIL.plinthProjection;
+  addBox(
+    bucket,
+    "stone",
+    [plan.widthM + P * 2, HOUSE_DETAIL.plinthHeight, plan.depthM + P * 2],
+    [0, HOUSE_DETAIL.plinthHeight / 2 - 0.02, 0],
+  );
   addWalls(bucket, plan, config);
 
   const openings = deriveOpenings(plan);

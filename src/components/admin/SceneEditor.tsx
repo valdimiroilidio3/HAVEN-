@@ -14,7 +14,9 @@ import {
   saveSceneDraftAction,
   type AdminState,
 } from "@/lib/actions/admin";
-import { PROPERTY_STATUS_LABELS, TYPOLOGY_CATALOGUE } from "@/lib/domain/constants";
+import { PROPERTY_STATUS_LABELS, TYPOLOGIES, TYPOLOGY_CATALOGUE } from "@/lib/domain/constants";
+import { getFloorPlan } from "@/lib/domain/floorplans";
+import { HOUSE_CONFIG } from "@/components/three/house-geometry";
 import type { PropertyStatus, PublicationStatus, Typology } from "@/lib/domain/types";
 import { cn } from "@/lib/utils";
 import { validateScene, type SceneReport } from "@/lib/3d/validate";
@@ -48,12 +50,20 @@ interface Placement {
 const SITE_HALF_W = Math.max(Math.abs(SITE_BOUNDS.minX), Math.abs(SITE_BOUNDS.maxX));
 const SITE_HALF_D = Math.max(Math.abs(SITE_BOUNDS.minZ), Math.abs(SITE_BOUNDS.maxZ));
 const HOUSE_COLORS: Record<Typology, string> = { T1: "#d9d3c4", T2: "#c9c0ab", T3: "#bdb4a1", T4: "#a9a08c" };
-const FOOTPRINT: Record<Typology, { w: number; d: number; h: number }> = {
-  T1: { w: 7.6, d: 9.2, h: 3.35 },
-  T2: { w: 8.4, d: 10.2, h: 5.9 },
-  T3: { w: 9.2, d: 11.4, h: 6.15 },
-  T4: { w: 10.2, d: 12.6, h: 6.4 },
-};
+/**
+ * Footprints come from the floor plans, never from a second table.
+ *
+ * This used to be a hard-coded {7.6 × 9.2, 8.4 × 10.2, …} that disagreed with
+ * `getFloorPlan` on every typology, so the editor drew and described houses at
+ * sizes the 3D scene never used.
+ */
+const FOOTPRINT: Record<Typology, { w: number; d: number; h: number }> = Object.fromEntries(
+  TYPOLOGIES.map((typology) => {
+    const plan = getFloorPlan(typology);
+    const config = HOUSE_CONFIG[typology]!;
+    return [typology, { w: plan.widthM, d: plan.depthM, h: config.groundH + config.upperH }];
+  }),
+) as Record<Typology, { w: number; d: number; h: number }>;
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const round = (value: number) => Math.round(value * 10) / 10;

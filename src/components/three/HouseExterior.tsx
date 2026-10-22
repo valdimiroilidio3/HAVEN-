@@ -125,6 +125,7 @@ export function HouseExterior({
       {meshFor("gravel", materials.gravel)}
       {/* Vegetation is no longer part of the house mesh: garden planting belongs
           to the plot (lib/3d/parts.ts), where it is bounded by the plot walls. */}
+      {meshFor("interior", materials.interior, false)}
       {meshFor("glass", night ? materials.glassNight : materials.glass, false)}
       {meshFor("glassRail", materials.glassRail, false)}
       {selected && (

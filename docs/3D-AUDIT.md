@@ -615,3 +615,109 @@ the decision can be made explicitly.
 The element keeps its `SITE.lagoon` identifier: that key is shared by the plan,
 the rules, the editor and the viewer, and renaming it is repository-wide churn
 with no spatial benefit. Public copy now says "pool".
+
+## 16. Architectural presence of the houses
+
+### 16.1 Audit — what was actually wrong
+
+Read from `house-geometry.ts` (the single builder for all four typologies) and
+confirmed against the built vertex bounds, not against intent:
+
+| # | Defect | Evidence |
+| --- | --- | --- |
+| A | Canopy posts did not reach the canopy | Post centre `y = 1.09`, height `2.68` → spans **−0.25 … 2.43**; the canopy slab is at **2.73**. A 30 cm gap, and the post started 25 cm underground. |
+| B | The roof was a floating lid | One slab, **1.00–1.10 m** overhang, 0.34 m thick, no fascia and no soffit. The shadows it cast made the walls look unfinished. |
+| C | The house was pasted on the ground | A 0.16 m slab at `y = 0.02` → **8 cm** of visible base, no projection. |
+| D | Joinery had no sills or heads | The sill expression ended in dead code `+ (isH ? 0 : 0)`, appeared only above 0.5 m, and no head drip existed. |
+| E | Glass was a black mirror | `metalness 0.92`, `opacity 0.62`, and **nothing behind it**. Walls are built with real holes, so every window showed the sky through the house. |
+| F | Chimney was a plain box | No cap, top 0.98 m above the roof. |
+| G | Storeys read as one extrusion | No reveal where the upper volume meets the terrace slab. |
+| H | Terraces dissolved into the lawn | A 0.14 m slab with no edge band. |
+| I | **Cameras framed the north row from behind** | The rig derived its direction from the house's *absolute coordinates*. For H01 it placed the camera at **inFront = −10.3 m** — 10.3 m behind the facade, looking at the rear wall. |
+| J | The editor used a different site | `SceneEditor` carried its own footprint table (7.6 × 9.2 …) that disagreed with `getFloorPlan` on **all four** typologies (7.2 × 10.4 …). |
+
+Defects I and J were found by the new tests, not by inspection.
+
+### 16.2 Changes
+
+One constant block, `HOUSE_DETAIL`, owns every presentation dimension; wall
+footprints, storey heights and plans are untouched.
+
+- **Roof** — rebuilt as fascia + field + soffit + drip. Overhang 0.55 m (was 1.0),
+  fascia 0.26 m (taller than the 0.2 m field, so the edge reads as an arris),
+  soffit 5.5 cm under the overhang. The chimney now starts below the field and
+  ends with a cap that oversails it.
+- **Plinth** — 0.22 m high, standing 8 cm proud of the wall: the house meets the
+  ground through a base.
+- **Joinery** — sills project 11 cm past the face on both axes (dead code
+  removed), a 5 cm head drip caps every opening, and an **interior backdrop**
+  sits 24 cm behind the glazing, lifted so full-height glazing cannot carry it
+  below grade.
+- **Glass** — `metalness 0.12`, `roughness 0.045`, `opacity 0.5`,
+  `envMapIntensity 2.1`: dielectric glass that reflects the environment
+  lightformers instead of swallowing the light.
+- **Storeys** — a 5 cm reveal under the upper volume; balcony slabs get a soffit;
+  terraces get an edge band; the entrance keeps its canopy and gains a flush
+  threshold apron (floor and grade are both at y = 0, so a step would bury it).
+- **Framing** — new `lib/3d/framing.ts`: pure functions computing six named views
+  (hero, three-quarter, facade, aerial, detail, context) from the house's real
+  footprint, its real height and its **facing**. Distance solves the camera's
+  half-angles, so a wide house never overflows the frame, and the eye height
+  follows the volume. The rig now consumes it.
+- **Editor** — footprints derived from `getFloorPlan` + `HOUSE_CONFIG`.
+
+### 16.3 Visual evidence
+
+`docs/houses-before-after.png` (front) and
+`docs/houses-before-after-three-quarter.png` are real renders of the merged
+geometry: `scripts/render-elevations.ts` pulls the **previous builder from git**,
+builds both versions, and rasterises them with an orthographic camera and flat
+shading. Before/after, all four typologies, same camera.
+
+What the images show: the roof now has an edge and a shadow line instead of
+hovering; the plinth connects the walls to grade; sills and heads give the
+openings a frame; the chimney is a rendered shaft with a cap; the windows have
+depth instead of reading as flat panels.
+
+**What they are not:** beauty renders. No GPU exists in this environment, so
+there is no PBR, no shadows, no reflections — and no claim of visual approval.
+
+### 16.4 Measured cost
+
+```
+per house : +1 draw call (the interior plane), +621 triangles
+4 prototypes: 42 → 46 draw calls, 11,680 → 14,164 triangles
+13 houses : +13 draw calls, ~8.1k triangles in total
+```
+
+Measured by `scripts/measure-houses.ts`, which builds the current code and the
+previous commit side by side.
+
+### 16.5 Verification
+
+| Gate | Result |
+| --- | --- |
+| `tsc --noEmit` | clean |
+| `npx vitest run` | **235/235** (16 files; +82: 35 geometry, 47 framing) |
+| `npm run audit:3d` | 0 critical / 0 high / 1 medium (H13) / 0 low |
+| `npm run lint` | clean |
+| `npm run build` | compiled successfully |
+
+Every typology is tested, not one demo house: no bucket below grade, plinth
+contact, overhang within 0.4–0.8 m, ridge height consistent with the storeys,
+glazing within 30 cm of the wall plane, an interior plane behind every window,
+metal starting at grade (the canopy posts), and the approved plan dimensions
+unchanged.
+
+### 16.6 Still open
+
+- **Textures, not materials, at close range.** The PBR parameters are coherent
+  and shared, but there are no normal maps and no triplanar mapping: walk up to
+  a wall and the plaster is flat. This is the next visual step.
+- **Lighting presets** are unchanged (day/night only). Golden hour and blue hour
+  are not implemented, so no material response has been judged under them.
+- **The commercial panel** on selection still shows the old copy; the premium
+  presentation pass was not attempted in this round.
+- **Not verified in a browser.** Framing is tested geometrically (camera in
+  front, outside the footprint, roof inside the frame) and elevations are
+  rendered offline; the WebGL result itself has not been seen.
