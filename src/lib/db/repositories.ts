@@ -38,9 +38,19 @@ import { canTransitionPublication, canTransitionStatus, statusTransitionError, v
 import { computeDashboardMetrics } from "@/lib/domain/metrics";
 import { slugFor, SEED_UNITS } from "@/lib/domain/inventory";
 import { getFloorPlan } from "@/lib/domain/floorplans";
-import { ConflictError, DomainError, NotFoundError, UnauthorizedError } from "@/lib/domain/errors";
+import { ConflictError, DomainError, NotFoundError, SceneValidationError, UnauthorizedError } from "@/lib/domain/errors";
 import { normalizeRotation, SITE_BOUNDS, type PropertyInput } from "@/lib/domain/validation";
 import { DEMO_SETTINGS } from "@/lib/domain/inventory";
+import {
+  draftFingerprint,
+  evaluatePublication,
+  summarisePublication,
+  warningLines,
+  type PublicationPlacement,
+} from "@/lib/domain/scene-publication";
+import { validateScene, type SceneEntryInput } from "@/lib/3d/validate";
+import { GARDEN_BOUNDS, SITE, pointOnRoad, sportsKeepOut } from "@/lib/3d/site";
+import { inLagoonWater } from "@/lib/3d/lagoon";
 
 export interface Actor {
   id: string | null;
@@ -233,13 +243,43 @@ export async function getPublishedScene(db: DataGateway): Promise<PublicSceneEnt
     .filter((entry): entry is PublicSceneEntry => entry !== null);
 }
 
+/**
+ * Where a newly created home lands before anyone places it.
+ *
+ * This used to fall back to a short list of hard-coded points — the first of
+ * which, (0, 0), is the middle of the lagoon. It never mattered while publishing
+ * was unvalidated; now that the server refuses to ship an invalid scene, a new
+ * draft home would block every publication until it was moved. The fallback is
+ * therefore a search over the site: a spot clear of the carriageways, the ring,
+ * the lagoon basin and the deck, and far enough from the homes already placed.
+ */
 function defaultSlot(taken: Array<{ x: number; z: number }>): { x: number; z: number } {
-  const candidates = SEED_UNITS.map((u) => ({ x: u.position.x, z: u.position.z }));
-  candidates.push({ x: 0, z: 0 }, { x: 0, z: -38 }, { x: 42, z: 40 }, { x: -44, z: -30 });
-  for (const candidate of candidates) {
-    if (!taken.some((t) => Math.hypot(t.x - candidate.x, t.z - candidate.z) < 9)) return candidate;
+  const ring = SITE.ring.inner;
+  const sporting = sportsKeepOut();
+  const free = (x: number, z: number) =>
+    x > GARDEN_BOUNDS.minX + 12 &&
+    x < GARDEN_BOUNDS.maxX - 12 &&
+    z > GARDEN_BOUNDS.minZ + 12 &&
+    z < GARDEN_BOUNDS.maxZ - 12 &&
+    !pointOnRoad(x, z, 5) &&
+    // Never inside the central garden: that is the shared landscape.
+    !(x > ring.minX - 6 && x < ring.maxX + 6 && z > ring.minZ - 6 && z < ring.maxZ + 6) &&
+    !inLagoonWater(x, z, 2.2) &&
+    // The sports park and its clubhouse own the west band.
+    !sporting.some((zone) => Math.hypot(zone.x - x, zone.z - z) < zone.radius) &&
+    !taken.some((t) => Math.hypot(t.x - x, t.z - z) < 12);
+
+  for (const unit of SEED_UNITS) {
+    if (free(unit.position.x, unit.position.z)) return { x: unit.position.x, z: unit.position.z };
   }
-  return { x: 0, z: 0 };
+  for (let x = GARDEN_BOUNDS.minX + 12; x <= GARDEN_BOUNDS.maxX - 12; x += 6) {
+    for (let z = GARDEN_BOUNDS.minZ + 12; z <= GARDEN_BOUNDS.maxZ - 12; z += 6) {
+      if (free(x, z)) return { x: Math.round(x * 10) / 10, z: Math.round(z * 10) / 10 };
+    }
+  }
+  // No legal slot exists; the placement is kept out of the lagoon so that the
+  // publication gate reports a real problem rather than a water feature.
+  return { x: GARDEN_BOUNDS.minX + 16, z: GARDEN_BOUNDS.maxZ - 16 };
 }
 
 function propertyRowFromInput(input: PropertyInput, existing?: Property): Row {
@@ -456,6 +496,52 @@ export async function changePropertyStatus(db: DataGateway, actor: Actor, input:
   return updated;
 }
 
+/**
+ * The scene as it *would* look after a change, validated.
+ *
+ * Used when a home joins the public scene: a home that is already published
+ * contributes its published placement (that is what the viewer draws), and the
+ * candidate contributes its draft placement, because that is what would ship.
+ * Drafts of other unpublished homes are ignored, exactly as in `publishScene`.
+ */
+async function assertScenePublishable(db: DataGateway, includePropertyId: string): Promise<void> {
+  const [positionRows, propertyRows] = await Promise.all([db.select("property_positions"), db.select("properties")]);
+  const properties = propertyRows.map(mapProperty);
+  const byId = new Map(properties.map((property) => [property.id, property]));
+  const placements: PublicationPlacement[] = positionRows
+    .map((row) => {
+      const property = byId.get(String(row.property_id));
+      if (!property) return null;
+      const candidate = property.publication === "published" || property.id === includePropertyId;
+      if (!candidate) return null;
+      const published = property.publication === "published";
+      return {
+        propertyId: property.id,
+        x: Number(published ? row.published_x : row.x),
+        z: Number(published ? row.published_z : row.z),
+        rotationY: Number(published ? row.published_rotation_y : row.rotation_y),
+      };
+    })
+    .filter((placement): placement is PublicationPlacement => placement !== null);
+
+  let evaluation;
+  try {
+    evaluation = evaluatePublication(validateScene({ entries: sceneEntriesFrom(placements, properties) }));
+  } catch (error) {
+    console.error("[HAVEN] scene validation failed before publication:", error);
+    throw new DomainError(
+      "The scene could not be validated, so nothing was published. Try again or run npm run audit:3d.",
+      "scene_validation_failed",
+    );
+  }
+  if (!evaluation.ok) {
+    throw new SceneValidationError(
+      `This home cannot go public: ${evaluation.blocking.length} blocking finding(s). Fix the placement and try again.`,
+      evaluation.blocking,
+    );
+  }
+}
+
 export async function setPublication(
   db: DataGateway,
   actor: Actor,
@@ -471,8 +557,34 @@ export async function setPublication(
   }
   const stateError = validateStateCombination(current.status, publication);
   if (stateError) throw new DomainError(stateError);
+
+  // Joining the public scene is a publication: the placement is validated
+  // first, so the viewer never draws a home the rules reject.
+  if (publication === "published" && current.publication !== "published") {
+    await assertScenePublishable(db, propertyId);
+  }
+
   const updated = await db.transaction(async (tx) => {
     const rows = await tx.update("properties", { id: propertyId }, { publication, updated_at: nowIso(), updated_by: actor.id });
+    if (publication === "published") {
+      // Promote the placement that was just validated: the viewer reads the
+      // published columns, so they must hold the validated coordinates.
+      const positions = await tx.select("property_positions", { where: { property_id: propertyId }, limit: 1 });
+      const position = positions[0];
+      if (position) {
+        await tx.update(
+          "property_positions",
+          { property_id: propertyId },
+          {
+            published_x: position.x,
+            published_z: position.z,
+            published_rotation_y: position.rotation_y,
+            published_at: nowIso(),
+            updated_by: actor.id,
+          },
+        );
+      }
+    }
     await logActivity(tx, actor, {
       action: "property.publication_changed",
       entityType: "property",
@@ -681,6 +793,8 @@ export interface SceneAdminState {
   isDirty: boolean;
   lastPublishedAt: string | null;
   lastPublishedBy: string | null;
+  /** Hash of the draft coordinates this view was built from. */
+  draftFingerprint: string;
 }
 
 /** Admin view of the masterplan: draft coordinates plus published baseline. */
@@ -696,23 +810,146 @@ export async function getSceneAdmin(db: DataGateway): Promise<SceneAdminState> {
     isDirty,
     lastPublishedAt: settings.scenePublishedAt ?? null,
     lastPublishedBy: settings.scenePublishedBy ?? null,
+    draftFingerprint: draftFingerprint(
+      positions.map((position) => ({
+        propertyId: position.propertyId,
+        x: position.x,
+        z: position.z,
+        rotationY: position.rotationY,
+      })),
+    ),
   };
 }
 
-export async function publishScene(db: DataGateway, actor: Actor): Promise<{ published: number; publishedAt: string }> {
+export interface PublishSceneOptions {
+  /**
+   * Fingerprint of the draft the operator was looking at. When present and the
+   * stored draft no longer matches, the publication is refused: it would ship a
+   * scene nobody reviewed.
+   */
+  expectedFingerprint?: string | null;
+}
+
+export interface PublishSceneResult {
+  /** Placements validated and copied — the homes the public viewer renders. */
+  published: number;
+  /** Rows left alone because the home is not published yet. */
+  withheld: number;
+  publishedAt: string;
+  /** Fingerprint of the exact scene that was validated and published. */
+  fingerprint: string;
+  /** Recorded findings below the blocking threshold. Never dropped. */
+  warnings: string[];
+}
+
+/** The scene a set of placements describes, in the shape the validator wants. */
+function sceneEntriesFrom(
+  placements: PublicationPlacement[],
+  properties: Array<{ id: string; code: string; typology: Typology }>,
+): SceneEntryInput[] {
+  const byId = new Map(properties.map((property) => [property.id, property]));
+  return placements
+    .map((placement) => {
+      const property = byId.get(placement.propertyId);
+      if (!property) return null;
+      return {
+        property: { code: property.code, typology: property.typology },
+        position: { x: placement.x, z: placement.z },
+        rotationY: placement.rotationY,
+      } satisfies SceneEntryInput;
+    })
+    .filter((entry): entry is SceneEntryInput => entry !== null)
+    .sort((a, b) => a.property.code.localeCompare(b.property.code));
+}
+
+/**
+ * Publish the masterplan.
+ *
+ * Publication is a copy of the draft coordinates onto the published columns, and
+ * it is gated: the scene is validated **inside the same transaction**, on the
+ * rows that are about to be copied, so there is no window in which the draft can
+ * change between validation and copy.
+ *
+ * The gateway cannot always offer a real transaction (Supabase talks HTTP, where
+ * `transaction()` degrades to a plain call), so the copy is also a
+ * compare-and-set: every update is conditioned on the exact draft coordinates
+ * that were validated. If another editor saved in between, the update matches no
+ * row, the count disagrees, and the whole publication is refused.
+ */
+export async function publishScene(
+  db: DataGateway,
+  actor: Actor,
+  options: PublishSceneOptions = {},
+): Promise<PublishSceneResult> {
   requireCapability(actor, "scene:publish");
-  const publishedAt = nowIso();
+
   return db.transaction(async (tx) => {
-    const positions = await tx.select("property_positions");
-    for (const row of positions) {
-      await tx.update("property_positions", { property_id: row.property_id }, {
-        published_x: row.x,
-        published_z: row.z,
-        published_rotation_y: row.rotation_y,
-        published_at: publishedAt,
-        updated_by: actor.id,
-      });
+    const [positionRows, propertyRows] = await Promise.all([tx.select("property_positions"), tx.select("properties")]);
+    const properties = propertyRows.map(mapProperty);
+    const placements: PublicationPlacement[] = positionRows.map((row) => ({
+      propertyId: String(row.property_id),
+      x: Number(row.x),
+      z: Number(row.z),
+      rotationY: Number(row.rotation_y),
+    }));
+    // The fingerprint covers every draft row, because that is the draft the
+    // operator was looking at — including homes that are not published yet.
+    const fingerprint = draftFingerprint(placements);
+
+    // What actually ships: the public scene is the set of *published* homes
+    // (`getPublishedScene` uses the same filter). A home still in draft is not
+    // on the site yet, so it neither blocks the masterplan nor gets its
+    // coordinates promoted behind anyone's back.
+    const publishedIds = new Set(properties.filter((property) => property.publication === "published").map((property) => property.id));
+    const shipped = placements.filter((placement) => publishedIds.has(placement.propertyId));
+
+    // 1. Staleness: was this the draft the operator saw?
+    if (options.expectedFingerprint && options.expectedFingerprint !== fingerprint) {
+      throw new ConflictError(
+        "The draft changed since this page was loaded. Reload the editor, review the new placement and publish again.",
+      );
     }
+
+    // 2. Validation, on exactly these rows. A validator failure is a refusal.
+    const entries = sceneEntriesFrom(shipped, properties);
+    let evaluation;
+    try {
+      evaluation = evaluatePublication(validateScene({ entries }));
+    } catch (error) {
+      console.error("[HAVEN] scene validation failed before publication:", error);
+      throw new DomainError(
+        "The scene could not be validated, so nothing was published. Try again or run npm run audit:3d.",
+        "scene_validation_failed",
+      );
+    }
+    if (!evaluation.ok) {
+      throw new SceneValidationError(
+        `Publication blocked by ${evaluation.blocking.length} blocking finding(s). Fix them and publish again.`,
+        evaluation.blocking,
+      );
+    }
+
+    // 3. Copy — conditioned on the coordinates that were just validated.
+    const publishedAt = nowIso();
+    for (const placement of shipped) {
+      const rows = await tx.update(
+        "property_positions",
+        { property_id: placement.propertyId, x: placement.x, z: placement.z, rotation_y: placement.rotationY },
+        {
+          published_x: placement.x,
+          published_z: placement.z,
+          published_rotation_y: placement.rotationY,
+          published_at: publishedAt,
+          updated_by: actor.id,
+        },
+      );
+      if (rows.length !== 1) {
+        throw new ConflictError(
+          "The draft changed while it was being validated, so nothing was published. Reload the editor and try again.",
+        );
+      }
+    }
+
     const settingsRow = await tx.select("app_settings", { where: { key: "app" }, limit: 1 });
     const settings = mapSettings(settingsRow[0], DEMO_SETTINGS as AppSettings);
     await tx.update("app_settings", { key: "app" }, {
@@ -720,14 +957,29 @@ export async function publishScene(db: DataGateway, actor: Actor): Promise<{ pub
       updated_at: publishedAt,
       updated_by: actor.id,
     });
+
+    // 4. Record what passed, including what it passed with.
     await logActivity(tx, actor, {
       action: "scene.published",
       entityType: "scene",
       entityId: null,
-      summary: `Published the condominium masterplan (${positions.length} placements).`,
-      metadata: { publishedAt },
+      summary: `Published the condominium masterplan (${shipped.length} placements). ${summarisePublication(evaluation)}`,
+      metadata: {
+        publishedAt,
+        fingerprint,
+        placements: shipped.length,
+        withheld: placements.length - shipped.length,
+        warnings: evaluation.warnings,
+      },
     });
-    return { published: positions.length, publishedAt };
+
+    return {
+      published: shipped.length,
+      withheld: placements.length - shipped.length,
+      publishedAt,
+      fingerprint,
+      warnings: warningLines(evaluation),
+    };
   });
 }
 

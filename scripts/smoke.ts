@@ -13,6 +13,7 @@ import path from "node:path";
 import { SqliteGateway } from "../src/lib/db/sqlite";
 import { ensureSeeded } from "../src/lib/db/seed";
 import { listProfiles } from "../src/lib/db/auth-repo";
+import { SceneValidationError } from "../src/lib/domain/errors";
 import {
   archiveProperty,
   changePropertyStatus,
@@ -22,6 +23,7 @@ import {
   getDashboardMetrics,
   getProperty,
   getSceneAdmin,
+  listProperties,
   listPublicProperties,
   publishScene,
   resetPlacementDraft,
@@ -131,8 +133,20 @@ async function main() {
     const afterRelease = await (await import("../src/lib/db/repositories")).getPropertyRelations(db, created.id);
     check("releasing closes the reservation", available.status === "available" && Boolean(afterRelease?.reservations.every((r) => r.status !== "active")));
 
-    const published = await setPublication(db, managerActor, created.id, "published");
-    check("published property is publicly visible", published.publication === "published");
+    // Joining the public scene is itself a publication: the placement is
+    // validated first. This home was created at a default slot with no road
+    // frontage, so the gate must refuse it — and leave it in draft.
+    let refused: unknown;
+    try {
+      await setPublication(db, managerActor, created.id, "published");
+    } catch (error) {
+      refused = error;
+    }
+    check("a home with no legal placement cannot go public", refused instanceof SceneValidationError);
+    check(
+      "the refused home stays a draft",
+      (await getProperty(db, created.id))?.publication === "draft",
+    );
 
     const archived = await archiveProperty(db, adminActor, created.id);
     check("admin can archive", archived.publication === "archived");
@@ -161,10 +175,17 @@ async function main() {
 
     const publishResult = await publishScene(db, adminActor);
     const afterPublish = await getSceneAdmin(db);
-    check(
-      "publishing promotes every draft coordinate",
-      publishResult.published === afterPublish.positions.length && afterPublish.positions.every((p) => p.x === p.publishedX && p.z === p.publishedZ) && !afterPublish.isDirty,
+    const publishedIds = new Set(
+      (await listProperties(db, { includeArchived: true, pageSize: 100 })).rows
+        .filter((property) => property.publication === "published")
+        .map((property) => property.id),
     );
+    check(
+      "publishing promotes every published placement",
+      publishResult.published === publishedIds.size &&
+        afterPublish.positions.filter((p) => publishedIds.has(p.propertyId)).every((p) => p.x === p.publishedX && p.z === p.publishedZ),
+    );
+    check("homes still in draft are withheld, not published", publishResult.withheld === afterPublish.positions.length - publishedIds.size);
 
     await savePlacementDraft(db, managerActor, [{ propertyId: target.propertyId, x: target.x + 4, z: target.z, rotationY: target.rotationY }]);
     await resetPlacementDraft(db, managerActor);

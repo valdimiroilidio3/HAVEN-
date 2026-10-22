@@ -1,3 +1,5 @@
+import type { PublicationIssue } from "./scene-publication";
+
 /**
  * Domain errors. Messages are written for operators and safe to surface in the
  * admin UI; unexpected errors are logged and replaced with a generic message.
@@ -23,6 +25,21 @@ export class UnauthorizedError extends DomainError {
   constructor(message = "You do not have permission to perform this action.") {
     super(message, "unauthorized");
     this.name = "UnauthorizedError";
+  }
+}
+
+/**
+ * A scene that cannot be published because validation found blocking defects.
+ * The issues travel with the error so the operator sees what to fix, not just
+ * that something was wrong.
+ */
+export class SceneValidationError extends DomainError {
+  readonly issues: PublicationIssue[];
+
+  constructor(message: string, issues: PublicationIssue[]) {
+    super(message, "scene_invalid");
+    this.name = "SceneValidationError";
+    this.issues = issues;
   }
 }
 

@@ -62,6 +62,7 @@ export default async function SceneEditorPage() {
           canPublish={canPublish}
           publishedAt={scene.lastPublishedAt}
           publishedBy={scene.lastPublishedBy}
+          draftFingerprint={scene.draftFingerprint}
         />
       ) : (
         <AdminCard title="Read-only access">

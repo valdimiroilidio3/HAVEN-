@@ -42,11 +42,11 @@ import {
   zodFieldErrors,
 } from "@/lib/domain/validation";
 import type { ActionResult } from "@/lib/domain/types";
-import { DomainError } from "@/lib/domain/errors";
+import { DomainError, SceneValidationError } from "@/lib/domain/errors";
 import { featuresFromForm, formToObject } from "./helpers";
 import type { Actor } from "@/lib/db/repositories";
 
-export type AdminState = ActionResult<{ message: string }> | null;
+export type AdminState = ActionResult<{ message: string; warnings?: string[] }> | null;
 
 async function actorFor(capability: Capability): Promise<{ ok: true; actor: Actor } | { ok: false; state: AdminState }> {
   const session = await getSession();
@@ -65,6 +65,18 @@ function revalidateAll(slug?: string) {
 }
 
 function toState(error: unknown): AdminState {
+  if (error instanceof SceneValidationError) {
+    return {
+      ok: false,
+      error: error.message,
+      issues: error.issues.map((issue) => ({
+        objectId: issue.objectId,
+        severity: issue.severity,
+        message: issue.message,
+        suggestion: issue.suggestion,
+      })),
+    };
+  }
   if (error instanceof DomainError) return { ok: false, error: error.message };
   console.error("[HAVEN] admin action failed:", error);
   return { ok: false, error: "Something went wrong. Please try again." };
@@ -268,11 +280,22 @@ export async function publishSceneAction(_prev: AdminState, formData: FormData):
   if (expect === "true") {
     return { ok: false, error: "Save your draft before publishing. Unsaved changes are never published." };
   }
+  // The fingerprint ties this request to the draft the operator was reviewing.
+  const expectedFingerprint = String(formData.get("draftFingerprint") ?? "").trim();
   try {
     const db = await getDb();
-    const result = await publishScene(db, auth.actor);
+    // The repository validates the scene inside the publish transaction; an
+    // invalid scene never reaches the published columns.
+    const result = await publishScene(db, auth.actor, { expectedFingerprint: expectedFingerprint || null });
     revalidateAll();
-    return { ok: true, data: { message: `Published ${result.published} placements.` } };
+    const base = `Published ${result.published} placements.`;
+    return {
+      ok: true,
+      data: {
+        message: result.warnings.length === 0 ? base : `${base} ${result.warnings.length} recorded warning${result.warnings.length === 1 ? "" : "s"}.`,
+        warnings: result.warnings,
+      },
+    };
   } catch (error) {
     return toState(error);
   }

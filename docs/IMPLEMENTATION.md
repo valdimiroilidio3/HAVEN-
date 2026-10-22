@@ -116,6 +116,62 @@ live in the 3D editor while a house is dragged.
   serving route.
 - `README.md`, `.env.example`, seed/reset/smoke scripts, and this report.
 
+## Publication gate (server-side validation)
+
+A scene could be published without ever being validated: the action checked a
+client flag (`draftDirty`) and copied the draft columns. The protocol requires
+server-side re-validation (§6.4, §10), so the gate now lives inside the data
+layer, not in the form.
+
+**What ships.** The public viewer renders the properties whose `publication` is
+`published` (`getPublishedScene`). That is exactly the set the gate validates and
+copies. A home still in draft is not on the site yet: it neither blocks the
+masterplan nor has its coordinates promoted silently.
+
+**Sequence, inside one `db.transaction`:**
+
+1. Capability check (`scene:publish`) in the repository, as before.
+2. Read the draft rows and compute `draftFingerprint` (sorted `id@x,z,rot`, FNV-1a).
+3. Refuse if the client's fingerprint no longer matches — the draft moved since
+   the page was loaded.
+4. Run `validateScene` (the same engine as `npm run audit:3d` and the live editor
+   check) over the placements about to be copied.
+5. Split the findings with `evaluatePublication`: **critical/high block**,
+   identical to the `--strict` CI gate; **medium/low are recorded**, in the
+   activity log and in the action result, never dropped and never promoted.
+6. Copy with a compare-and-set: every `UPDATE` is conditioned on the exact draft
+   coordinates that were validated. If another editor (or another process) saved
+   in between, the update matches no row, the count disagrees and the whole
+   publication is refused.
+7. Only then write `scenePublishedAt` and the audit entry.
+
+Step 6 is not redundant with the transaction: `DataGateway.transaction` is real
+on SQLite (`BEGIN IMMEDIATE`) but degrades to a plain call on Supabase, where
+HTTP cannot hold a transaction open. The CAS is what makes "the published version
+is the validated version" true on both drivers.
+
+**The other door into the public scene.** `setPublication(..., "published")`
+also puts a home in front of visitors, so it runs the same validation on the
+scene as it will look after the change, and promotes the placement it validated
+(`published_at` set). An invalid placement cannot reach the viewer through it.
+
+**Fail-safe.** If `validateScene` throws, nothing is published and the operator
+gets `scene_validation_failed`. The transaction rolls back; the Supabase path
+never wrote anything.
+
+**UI.** `publishSceneAction` returns structured `issues` (object id, severity,
+message, suggestion) on failure and `warnings[]` on success; the 3D editor lists
+them under the buttons.
+
+**Side effect found by the gate.** A new demo property used to be created at
+`(0, 0)` — the middle of the lagoon. Harmless while nothing was validated,
+fatal once publication was gated. `defaultSlot` now searches the site for a spot
+clear of the roads, the central garden, the lagoon, the sports park and the
+homes already placed. Note that no legal slot exists for a 14th home on this
+site: the masterplan is closed at 13 plots, so a new property needs a design
+decision before it can go public. The smoke test asserts that refusal instead of
+pretending it succeeds.
+
 ## Deliberate decisions
 
 1. **Draft and published coordinates are separate columns.** Publishing is a copy operation; the

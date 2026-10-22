@@ -84,11 +84,14 @@ export function SceneEditor({
   canPublish,
   publishedAt,
   publishedBy,
+  draftFingerprint,
 }: {
   properties: EditorProperty[];
   canPublish: boolean;
   publishedAt: string | null;
   publishedBy: string | null;
+  /** Fingerprint of the draft this page was rendered from (see scene-publication). */
+  draftFingerprint: string;
 }) {
   const router = useRouter();
   const [draft, setDraft] = React.useState<Record<string, Placement>>(() => initialState(properties));
@@ -434,6 +437,8 @@ export function SceneEditor({
         </form>
         <form action={publishAction} className="contents">
           <input type="hidden" name="draftDirty" value={String(dirty)} />
+          {/* The server refuses to publish if this draft has moved on since the page loaded. */}
+          <input type="hidden" name="draftFingerprint" value={draftFingerprint} />
           <SubmitButton
             label="Publish masterplan"
             icon={<Send className="h-3.5 w-3.5" aria-hidden />}
@@ -456,13 +461,26 @@ export function SceneEditor({
         <div className="ml-auto max-w-md space-y-1">
           {[saveState, publishState, resetState].map((state, index) =>
             state ? (
-              <p
-                key={index}
-                role={state.ok ? "status" : "alert"}
-                className={cn("text-[0.66rem] leading-snug", state.ok ? "text-moss-700" : "text-[#8a2f22]")}
-              >
-                {state.ok ? state.data.message : state.error}
-              </p>
+              <div key={index} className="space-y-1">
+                <p
+                  role={state.ok ? "status" : "alert"}
+                  className={cn("text-[0.66rem] leading-snug", state.ok ? "text-moss-700" : "text-[#8a2f22]")}
+                >
+                  {state.ok ? state.data.message : state.error}
+                </p>
+                {state.ok
+                  ? state.data.warnings?.map((warning) => (
+                      <p key={warning} className="text-[0.62rem] leading-snug text-ink-400">
+                        {warning}
+                      </p>
+                    ))
+                  : state.issues?.map((issue) => (
+                      <p key={`${issue.objectId}-${issue.message}`} className="text-[0.62rem] leading-snug text-ink-600">
+                        <span className="font-medium uppercase tracking-wide text-[#8a2f22]">{issue.severity}</span> {issue.message}{" "}
+                        <span className="text-ink-400">{issue.suggestion}</span>
+                      </p>
+                    ))}
+              </div>
             ) : null,
           )}
         </div>

@@ -251,9 +251,17 @@ export interface AuthSession {
   expiresAt: ISODate;
 }
 
+/** A blocking problem the operator can act on, returned with a failed action. */
+export interface ActionResultIssue {
+  objectId: string;
+  severity: string;
+  message: string;
+  suggestion: string;
+}
+
 export type ActionResult<T = undefined> =
   | { ok: true; data: T }
-  | { ok: false; error: string; fieldErrors?: Record<string, string[]> };
+  | { ok: false; error: string; fieldErrors?: Record<string, string[]>; issues?: ActionResultIssue[] };
 
 export interface Paginated<T> {
   rows: T[];

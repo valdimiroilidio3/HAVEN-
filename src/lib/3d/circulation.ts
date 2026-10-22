@@ -357,6 +357,10 @@ export function footpaths(entries: Array<{ code: string; position: PathPoint; ro
       // "in front" of the centre and still inside the footprint.
       minAhead: halfDepth + 1.5,
     });
+    // No path in front of this door: the house does not front the circuit. Do
+    // not invent one that cuts through the building — leave the gap, and let the
+    // validator report the door as unreachable.
+    if (!nearest) continue;
     paths.push({
       id: `path/spur/${entry.code}`,
       kind: "spur",
@@ -378,7 +382,7 @@ function nearestPoint(
   points: PathPoint[],
   target: PathPoint,
   front?: { facing: PathPoint; origin: PathPoint; minAhead: number },
-): PathPoint {
+): PathPoint | null {
   let best: PathPoint | null = null;
   let bestDistance = Number.POSITIVE_INFINITY;
   for (const point of points) {
@@ -393,7 +397,10 @@ function nearestPoint(
       best = point;
     }
   }
-  return best ?? nearestPoint(points, target);
+  if (best) return best;
+  // Without a façade constraint any point will do; with one, a point behind the
+  // house is not a fallback, it is a wrong answer.
+  return front ? null : points[0]!;
 }
 
 /** Build the graph: path samples become nodes, then link whatever meets. */
