@@ -59,6 +59,14 @@ export function Plot({ entry, pool, garage, rearDepth, night, lowQuality }: Plot
           return materials.carPaint[2]!;
         case "carGlass":
           return materials.carGlass;
+        case "trunk":
+          return materials.trunk;
+        case "foliage0":
+          return materials.foliage[0]!;
+        case "foliage1":
+          return materials.foliage[1]!;
+        case "foliage2":
+          return materials.foliage[2]!;
         default:
           return materials[key];
       }

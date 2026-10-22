@@ -4,20 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import {
-  Building2,
-  CalendarDays,
-  ChevronRight,
-  Database,
-  ExternalLink,
-  LayoutDashboard,
-  LogOut,
-  Menu,
-  Settings,
-  Sparkles,
-  Users,
-  X,
-} from "lucide-react";
+import { Building2, CalendarDays, ChevronRight, Database, ExternalLink, LayoutDashboard, LogOut, Menu, Settings, ShieldCheck, Sparkles, Users, X } from "lucide-react";
 import type { SessionUser } from "@/lib/domain/types";
 import { ROLE_LABELS } from "@/lib/domain/constants";
 import { signOut } from "@/lib/actions/auth";
@@ -27,6 +14,7 @@ const NAV = [
   { href: "/admin", label: "Overview", icon: LayoutDashboard, exact: true },
   { href: "/admin/properties", label: "Properties", icon: Building2 },
   { href: "/admin/3d-editor", label: "3D masterplan", icon: Sparkles },
+  { href: "/admin/scene", label: "Scene health", icon: ShieldCheck },
   { href: "/admin/leads", label: "Leads", icon: Users },
   { href: "/admin/visits", label: "Viewings", icon: CalendarDays },
   { href: "/admin/media", label: "Media & assets", icon: Database },

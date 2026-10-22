@@ -9,11 +9,12 @@ explicitly marked **unverified**.
 | --- | --- | --- |
 | TypeScript (strict) | `npx tsc --noEmit` | pass, 0 errors |
 | Lint | `npm run lint` | pass, 0 errors (warnings only) |
-| Unit tests | `npx vitest run` | 76/76 pass (7 files) |
+| Unit tests | `npx vitest run` | 87/87 pass (8 files) |
 | Data-layer smoke | `npx tsx scripts/smoke.ts` | 22/22 checks pass |
+| Spatial audit | `npm run audit:3d` | 0 critical / 0 high / 0 medium / 0 low |
 | Production build | `npm run build` | pass; 17 routes + middleware compiled |
 | Public rendering | HTTP against `next dev` | `/`, `/properties`, `/properties/[slug]`, `/visit`, `/login` → 200 |
-| Admin rendering | HTTP with a real session cookie | all 8 admin routes → 200 |
+| Admin rendering | HTTP with a real session cookie | all 9 admin routes → 200 |
 | Upload serving | HTTP | `/uploads/<file>` 200 with correct MIME; traversal and missing files → 404 |
 | Password verification | scrypt round-trip against seeded admin | correct password true, wrong password false |
 | Seed idempotency | `scripts/seed.ts` twice | second run skips, no duplicates |
@@ -25,7 +26,9 @@ Not verified, by absence of resources rather than by omission:
 - No browser E2E suite: interactions were verified by build + server rendering + repository smoke
   tests, not by automated clicks.
 
-The 3D scene has its own audit: [`docs/3D-AUDIT.md`](./3D-AUDIT.md).
+The 3D scene has its own audit: [`docs/3D-AUDIT.md`](./3D-AUDIT.md). Placement rules are gated by
+`npm run audit:3d` (inside `npm run check`), surfaced at `/admin/scene` for the published scene and
+live in the 3D editor while a house is dragged.
 
 ## Implemented
 

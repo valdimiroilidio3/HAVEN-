@@ -1,3 +1,4 @@
+import { PLOT } from "./site";
 import type { GarageSpec, PoolSpec, Rect } from "./site";
 
 /**
@@ -29,12 +30,16 @@ export type PartMaterial =
   | "water"
   | "glass"
   | "hedge"
+  | "trunk"
+  | "foliage0"
+  | "foliage1"
+  | "foliage2"
   | "carPaint0"
   | "carPaint1"
   | "carPaint2"
   | "carGlass";
 
-export type PartGroup = "boundary" | "carport" | "car" | "pool" | "deck" | "furniture";
+export type PartGroup = "boundary" | "carport" | "car" | "pool" | "deck" | "furniture" | "planting";
 
 export interface PartShape {
   kind: "box" | "cylinder" | "icosahedron" | "torus";
@@ -491,7 +496,107 @@ export function plotParts({ code, walls, garage, pool, seed, lowQuality = false 
     ...wallParts(code, walls),
     ...(garage ? carportParts(code, garage, seed, lowQuality) : []),
     ...(pool ? poolParts(code, pool) : []),
+    ...gardenParts(code, walls, pool, lowQuality),
   ];
+}
+
+
+/**
+ * Garden planting for one plot.
+ *
+ * This used to live inside `house-geometry.ts`, baked into the house mesh at
+ * fixed offsets from the façade. Those offsets were computed before the plot
+ * walls existed, so the trees sat 0.85 m *outside* the boundary — in the
+ * neighbour's garden — and the side hedge straddled the wall. Here the rear
+ * garden is measured from the plot itself, so planting can only land inside it:
+ *
+ *   - the hedge hugs the rear wall, inset by the wall thickness;
+ *   - the trees sit in the rear band, behind the pool deck when there is one;
+ *   - nothing may overlap the pool water or the deck.
+ *
+ * Returns nothing when the garden is too shallow to hold a plant honestly.
+ */
+function gardenParts(
+  code: string,
+  walls: PlotPartsInput["walls"],
+  pool: PoolSpec | null,
+  lowQuality: boolean,
+): Part[] {
+  const side = walls[0];
+  const rear = walls[2];
+  if (!side || !rear) return [];
+
+  // Local coordinates: the house faces +Z, so the rear garden is at negative Z.
+  const offsetX = Math.abs(side.x);
+  const rearWallZ = rear.z; // negative
+  const innerFaceZ = rearWallZ + PLOT.wallThickness / 2; // inner side of the wall
+  const hedgeDepth = 0.55;
+  const canopy = 1.0;
+  // Centre of the tree slot: 0.2 m clearance behind the hedge plus one radius.
+  const treeZ = innerFaceZ + 0.2 + canopy + 0.35;
+  // Depth of the free rear band, measured from the wall to the pool deck.
+  const poolRearZ = pool ? pool.z - pool.depth / 2 - pool.deck : null;
+  const bandDepth = (poolRearZ ?? -rearWallZ - 99) - innerFaceZ;
+
+  const parts: Part[] = [];
+
+  // Rear hedge, inset from the wall and clamped to the plot's inner width.
+  const hedgeWidth = Math.max(0, (offsetX - 0.7) * 2);
+  if (hedgeWidth >= 2) {
+    parts.push({
+      id: `${code}/planting/hedge-rear`,
+      group: "planting",
+      material: "hedge",
+      shape: {
+        kind: "box",
+        size: [hedgeWidth, 0.72, hedgeDepth],
+        position: [0, 0.36, innerFaceZ + hedgeDepth / 2 + 0.02],
+      },
+    });
+  }
+
+  // Trees need a 2 m slot plus margins, and must clear the pool deck.
+  const fitsBand = (poolRearZ === null ? Number.POSITIVE_INFINITY : bandDepth) >= canopy * 2 + 0.6;
+  const fitsPool = !pool || poolRearZ === null || poolRearZ - (treeZ + canopy) > 0.25;
+  if (!fitsBand || !fitsPool) return parts;
+
+  const slots = lowQuality ? [1] : [-1, 1];
+  const variant = Math.abs(hashCode(code)) % 3;
+  for (const sign of slots) {
+    const x = sign * (offsetX - 1.75);
+    if (Math.abs(x) + canopy > offsetX - 0.15) continue;
+    const name = `${code}/planting/tree-${sign > 0 ? "east" : "west"}`;
+    parts.push({
+      id: `${name}/trunk`,
+      group: "planting",
+      material: "trunk",
+      shape: { kind: "cylinder", size: [0.07, 0.11, 1.9], position: [x, 0.95, treeZ] },
+    });
+    parts.push({
+      id: `${name}/canopy`,
+      group: "planting",
+      material: `foliage${variant}` as PartMaterial,
+      shape: { kind: "icosahedron", size: [canopy], position: [x, 2.85, treeZ] },
+    });
+    parts.push({
+      id: `${name}/crown`,
+      group: "planting",
+      material: `foliage${(variant + 1) % 3}` as PartMaterial,
+      shape: {
+        kind: "icosahedron",
+        size: [canopy],
+        position: [x + 0.45, 3.3, treeZ + 0.26],
+        scale: [0.62, 0.5, 0.62],
+      },
+    });
+  }
+  return parts;
+}
+
+function hashCode(value: string): number {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) hash = (hash * 31 + value.charCodeAt(i)) | 0;
+  return hash;
 }
 
 export function partCentre(bounds: PartBounds): { x: number; z: number } {

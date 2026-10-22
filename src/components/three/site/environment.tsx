@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import * as THREE from "three";
 import { Environment, Lightformer } from "@react-three/drei";
 import { useThree } from "@react-three/fiber";
 import { lampPositions, plotFootprints } from "@/lib/3d/site";

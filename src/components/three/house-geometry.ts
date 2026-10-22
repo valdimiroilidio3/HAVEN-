@@ -106,12 +106,7 @@ type GeometryKey =
   | "glassRail"
   | "concrete"
   | "deck"
-  | "gravel"
-  | "hedge"
-  | "trunk"
-  | "foliage0"
-  | "foliage1"
-  | "foliage2";
+  | "gravel";
 
 export type HouseGeometrySet = Partial<Record<GeometryKey, THREE.BufferGeometry>>;
 
@@ -370,44 +365,6 @@ function addPergola(bucket: Bucket, plan: FloorPlan, config: HouseConfig) {
   }
 }
 
-function addPlanting(bucket: Bucket, plan: FloorPlan, seed: number) {
-  const rand = seeded(seed * 97 + 5);
-  const W = plan.widthM / 2;
-  const D = plan.depthM / 2;
-  for (let i = 0; i < 3; i++) {
-    const side = i % 2 === 0 ? -1 : 1;
-    const x = side * (W + 2.4 + rand() * 3.5);
-    const z = -D - 1.5 + rand() * (plan.depthM + 3);
-    const scale = 0.8 + rand() * 0.45;
-    const variant = Math.floor(rand() * 3);
-    add(bucket, "trunk", {
-      geometry: new THREE.CylinderGeometry(0.1, 0.17, 2.4, 7),
-      position: [x, 1.2 * scale, z],
-      scale: [scale, scale, scale],
-    });
-    add(bucket, `foliage${variant}` as GeometryKey, {
-      geometry: new THREE.IcosahedronGeometry(1, 1),
-      position: [x, 2.9 * scale, z],
-      scale: [1.45 * scale, 1.2 * scale, 1.45 * scale],
-    });
-    add(bucket, `foliage${(variant + 1) % 3}` as GeometryKey, {
-      geometry: new THREE.IcosahedronGeometry(1, 1),
-      position: [x + 0.55 * scale, 3.6 * scale, z + 0.3 * scale],
-      scale: [0.9 * scale, 0.75 * scale, 0.9 * scale],
-    });
-  }
-  addBox(bucket, "hedge", [plan.widthM * 0.7, 0.75, 0.7], [plan.widthM * 0.1, 0.38, -D - 3.2]);
-  addBox(bucket, "hedge", [0.7, 0.65, plan.depthM * 0.36], [W + 2.0, 0.33, -plan.depthM * 0.18]);
-}
-
-function seeded(seed: number): () => number {
-  let s = seed >>> 0;
-  return () => {
-    s = (s * 1664525 + 1013904223) >>> 0;
-    return s / 4294967296;
-  };
-}
-
 /* ── Public builder ───────────────────────────────────────────────────── */
 
 export function buildHouseGeometry(plan: FloorPlan, config: HouseConfig, seed = 1): HouseGeometrySet {
@@ -428,7 +385,6 @@ export function buildHouseGeometry(plan: FloorPlan, config: HouseConfig, seed = 
   addRoof(bucket, plan, config);
   addTerraces(bucket, plan);
   addPergola(bucket, plan, config);
-  addPlanting(bucket, plan, seed);
 
   const set: HouseGeometrySet = {};
   for (const key of Object.keys(bucket) as GeometryKey[]) {

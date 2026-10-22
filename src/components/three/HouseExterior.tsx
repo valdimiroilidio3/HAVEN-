@@ -123,11 +123,8 @@ export function HouseExterior({
       {meshFor("concrete", materials.concrete)}
       {meshFor("deck", materials.deck)}
       {meshFor("gravel", materials.gravel)}
-      {meshFor("hedge", materials.hedge)}
-      {meshFor("trunk", materials.trunk)}
-      {meshFor("foliage0", materials.foliage[0]!)}
-      {meshFor("foliage1", materials.foliage[1]!)}
-      {meshFor("foliage2", materials.foliage[2]!)}
+      {/* Vegetation is no longer part of the house mesh: garden planting belongs
+          to the plot (lib/3d/parts.ts), where it is bounded by the plot walls. */}
       {meshFor("glass", night ? materials.glassNight : materials.glass, false)}
       {meshFor("glassRail", materials.glassRail, false)}
       {selected && (

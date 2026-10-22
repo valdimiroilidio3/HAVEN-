@@ -17,6 +17,7 @@ import {
 import { PROPERTY_STATUS_LABELS, TYPOLOGY_CATALOGUE } from "@/lib/domain/constants";
 import type { PropertyStatus, PublicationStatus, Typology } from "@/lib/domain/types";
 import { cn } from "@/lib/utils";
+import { validateScene, type SceneReport } from "@/lib/3d/validate";
 import { SITE } from "@/lib/3d/site";
 import { SITE_BOUNDS } from "@/lib/domain/validation";
 
@@ -115,6 +116,49 @@ export function SceneEditor({
     [draft, baseline, properties],
   );
   const dirty = dirtyIds.length > 0;
+
+  /**
+   * Live spatial check of the draft.
+   *
+   * Moving a house re-runs the same validator the audit and the "Scene health"
+   * page use, debounced so dragging stays smooth. `vegetation` is skipped here
+   * only because the estate scatter costs more than it tells a manager while
+   * nudging a box; plot geometry (walls, pool, carport, garden planting) is
+   * always checked.
+   */
+  const draftEntries = React.useMemo(
+    () =>
+      properties.flatMap((property) => {
+        const placement = draft[property.id];
+        if (!placement) return [];
+        return [
+          {
+            property: { code: property.code, typology: property.typology },
+            position: { x: placement.x, z: placement.z },
+            rotationY: placement.rotationY,
+          },
+        ];
+      }),
+    [properties, draft],
+  );
+
+  const [check, setCheck] = React.useState<SceneReport | null>(null);
+  React.useEffect(() => {
+    const timer = window.setTimeout(() => setCheck(validateScene({ entries: draftEntries, vegetation: false })), 160);
+    return () => window.clearTimeout(timer);
+  }, [draftEntries]);
+
+  const codeToId = React.useMemo(() => new Map(properties.map((property) => [property.code, property.id])), [properties]);
+  const conflicts = React.useMemo(() => {
+    const set = new Set<string>();
+    for (const finding of check?.findings ?? []) {
+      if (finding.severity !== "critical" && finding.severity !== "high") continue;
+      const id = codeToId.get(finding.subject);
+      if (id) set.add(id);
+    }
+    return set;
+  }, [check, codeToId]);
+
   const selected = properties.find((property) => property.id === selectedId) ?? null;
   const selectedPlacement = selected ? draft[selected.id] : null;
 
@@ -250,6 +294,7 @@ export function SceneEditor({
               view={view}
               onSelect={setSelectedId}
               onMove={(id, x, z) => update(id, { x, z })}
+              conflicts={conflicts}
             />
             <OrbitControls
               makeDefault
@@ -263,6 +308,7 @@ export function SceneEditor({
             />
           </Canvas>
         </div>
+        <DraftCheck report={check} entries={draftEntries} onFocus={(code) => setSelectedId(codeToId.get(code) ?? null)} />
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-ink-900/10 bg-[#fbfbf8] px-3 py-2 text-[0.62rem] text-ink-500">
           <span>
             {dirty ? `${dirtyIds.length} unsaved change${dirtyIds.length === 1 ? "" : "s"}` : "No unsaved changes"}
@@ -434,6 +480,7 @@ function EditorScene({
   view,
   onSelect,
   onMove,
+  conflicts,
 }: {
   properties: EditorProperty[];
   draft: Record<string, Placement>;
@@ -441,6 +488,8 @@ function EditorScene({
   view: "site" | "plan";
   onSelect: (id: string) => void;
   onMove: (id: string, x: number, z: number) => void;
+  /** Houses with a critical or high finding in the live check. */
+  conflicts: Set<string>;
 }) {
   const [dragging, setDragging] = React.useState<string | null>(null);
 
@@ -529,6 +578,7 @@ function EditorScene({
         if (!placement) return null;
         const footprint = FOOTPRINT[property.typology];
         const isSelected = property.id === selectedId;
+        const conflicted = conflicts.has(property.id);
         return (
           <group
             key={property.id}
@@ -554,7 +604,7 @@ function EditorScene({
             <mesh position={[0, footprint.h / 2, 0]} castShadow receiveShadow>
               <boxGeometry args={[footprint.w, footprint.h, footprint.d]} />
               <meshStandardMaterial
-                color={isSelected ? "#c98a5f" : HOUSE_COLORS[property.typology]}
+                color={isSelected ? "#c98a5f" : conflicted ? "#b1543f" : HOUSE_COLORS[property.typology]}
                 roughness={0.82}
                 metalness={0.02}
               />
@@ -563,6 +613,12 @@ function EditorScene({
               <boxGeometry args={[footprint.w + 0.5, 0.16, footprint.d + 0.5]} />
               <meshStandardMaterial color="#6b675c" roughness={0.9} />
             </mesh>
+            {conflicted && (
+              <mesh rotation-x={-Math.PI / 2} position={[0, 0.05, 0]}>
+                <ringGeometry args={[Math.max(footprint.w, footprint.d) * 0.62, Math.max(footprint.w, footprint.d) * 0.62 + 0.3, 48]} />
+                <meshBasicMaterial color="#b1543f" side={THREE.DoubleSide} transparent opacity={0.85} />
+              </mesh>
+            )}
             <Html position={[0, footprint.h + 0.9, 0]} center distanceFactor={52} style={{ pointerEvents: "none" }}>
               <span
                 style={{
@@ -596,5 +652,67 @@ function EditorScene({
         </mesh>
       )}
     </group>
+  );
+}
+
+/** Live result of the spatial check, shown under the viewport. */
+function DraftCheck({
+  report,
+  entries,
+  onFocus,
+}: {
+  report: SceneReport | null;
+  entries: Array<{ property: { code: string } }>;
+  onFocus: (code: string) => void;
+}) {
+  if (!report) {
+    return (
+      <div className="border-t border-ink-900/10 bg-[#fbfbf8] px-3 py-2 text-[0.62rem] text-ink-400">
+        Checking the draft against the placement rules…
+      </div>
+    );
+  }
+
+  const blocking = report.findings.filter((finding) => finding.severity === "critical" || finding.severity === "high");
+  const codes = new Set(entries.map((entry) => entry.property.code));
+  const relevant = blocking.filter((finding) => codes.has(finding.subject) || codes.has(finding.objectId.split("/")[0]!));
+  const shown = relevant.slice(0, 3);
+
+  return (
+    <div
+      className={cn(
+        "border-t px-3 py-2 text-[0.64rem]",
+        relevant.length === 0 ? "border-ink-900/10 bg-[#f2f4ec] text-[#4a5a42]" : "border-[#b1543f]/30 bg-[#b1543f]/8 text-[#7d3a2b]",
+      )}
+      role="status"
+      aria-live="polite"
+    >
+      {relevant.length === 0 ? (
+        <p className="flex items-center gap-1.5">
+          <span aria-hidden>✓</span>
+          Placement clean · {report.checked.plots} plots, {report.checked.parts} parts checked
+        </p>
+      ) : (
+        <>
+          <p className="font-medium">
+            {relevant.length} blocking {relevant.length === 1 ? "issue" : "issues"} in this draft
+          </p>
+          <ul className="mt-1 space-y-0.5">
+            {shown.map((finding) => (
+              <li key={`${finding.objectId}-${finding.message}`} className="flex flex-wrap items-baseline gap-1.5">
+                <span className="rounded-sm bg-white/60 px-1 uppercase tracking-wide">{finding.severity}</span>
+                <button type="button" onClick={() => onFocus(finding.subject)} className="underline underline-offset-2">
+                  {finding.objectId}
+                </button>
+                <span className="text-[#7d3a2b]/80">{finding.message}</span>
+              </li>
+            ))}
+          </ul>
+          {relevant.length > shown.length && (
+            <p className="mt-1 text-[0.6rem] opacity-80">+{relevant.length - shown.length} more · see Scene health</p>
+          )}
+        </>
+      )}
+    </div>
   );
 }

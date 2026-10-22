@@ -8,12 +8,14 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
-import { ArrowRight, CalendarDays, CarFront, Layers, Maximize2, Moon, RotateCcw, RotateCw, Sparkles, Sun, Trophy, X, Boxes, Info, Waves } from "lucide-react";
+import { Activity, ArrowRight, Boxes, CalendarDays, CarFront, Info, Layers, Maximize2, Moon, RotateCcw, RotateCw, Sparkles, Sun, Trophy, Waves, X } from "lucide-react";
 import type { AppSettings, Property, PropertyMedia, PropertyPosition, PropertyStatus, Typology } from "@/lib/domain/types";
 import { PROPERTY_STATUS_LABELS, TYPOLOGIES, TYPOLOGY_CATALOGUE } from "@/lib/domain/constants";
 import { formatArea, formatCurrency, typologyHeadline } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { SiteScene } from "@/components/three/SiteScene";
+import { TelemetrySampler } from "@/components/three/TelemetrySampler";
+import { PerformancePanel } from "@/components/viewer/PerformancePanel";
 import { FloorPlan2D, PlanLegend } from "@/components/plan/FloorPlan2D";
 import { poolFor } from "@/lib/3d/site";
 
@@ -261,6 +263,7 @@ export function CondominiumExperience({ entries, settings, isAdmin = false, clas
   const [ready, setReady] = React.useState(false);
   const [interiorOpen, setInteriorOpen] = React.useState(false);
   const [showFilters, setShowFilters] = React.useState(false);
+  const [showPerf, setShowPerf] = React.useState(false);
   const [panelTab, setPanelTab] = React.useState<"overview" | "plan" | "gallery">("overview");
   const webgl = useWebGLSupport();
   const [lowQuality, setLowQuality] = useLowQuality();
@@ -371,6 +374,7 @@ export function CondominiumExperience({ entries, settings, isAdmin = false, clas
                 onHover={setHoveredId}
               />
             </React.Suspense>
+            {showPerf && <TelemetrySampler />}
             <OrbitControls
               makeDefault
               enableDamping
@@ -563,6 +567,16 @@ export function CondominiumExperience({ entries, settings, isAdmin = false, clas
             >
               {lowQuality ? "Performance" : "Quality"}
             </button>
+            <button
+              type="button"
+              onClick={() => setShowPerf((value) => !value)}
+              className="inline-flex h-9 items-center gap-1.5 rounded-full border border-white/60 bg-white/80 px-3 text-[0.7rem] font-medium text-ink-600 shadow-sm backdrop-blur transition hover:bg-white"
+              aria-pressed={showPerf}
+              title="Show the renderer's own frame statistics"
+            >
+              <Activity className="h-3.5 w-3.5" aria-hidden />
+              <span className="hidden sm:inline">Perf</span>
+            </button>
           </div>
         </div>
 
@@ -576,6 +590,8 @@ export function CondominiumExperience({ entries, settings, isAdmin = false, clas
           </p>
         </div>
       </div>
+
+      <PerformancePanel open={showPerf} onClose={() => setShowPerf(false)} lowQuality={lowQuality} timeOfDay={timeOfDay} />
 
       {/* Keyboard / screen-reader selection list */}
       <div className="sr-only">

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { SEED_UNITS } from "@/lib/domain/inventory";
 import {
@@ -16,7 +17,7 @@ import {
   type Rect,
 } from "@/lib/3d/site";
 import { SPATIAL_RULES, formatReport, validateScene, type SceneEntryInput } from "@/lib/3d/validate";
-import { partBounds, plotParts } from "@/lib/3d/parts";
+import { partBounds, plotParts, type Part } from "@/lib/3d/parts";
 import { garagePlan, plotWallsFor, poolFor } from "@/lib/3d/site";
 
 const entries: SceneEntryInput[] = SEED_UNITS.map((unit) => ({
@@ -162,6 +163,176 @@ describe("placement rules — private plots are keep-out zones", () => {
   });
 });
 
+describe("scene validation — objects may not occupy the house or the pool", () => {
+  const withExtra = (extra: (input: Parameters<typeof plotParts>[0]) => Part[]) => (input: Parameters<typeof plotParts>[0]) => [
+    ...plotParts(input),
+    ...extra(input),
+  ];
+
+  it("flags garden planting that grows outside its plot", () => {
+    const report = validateScene({
+      entries,
+      vegetation: false,
+      layout: withExtra(() => [
+        {
+          id: "H01/test/hedge-outside",
+          group: "planting",
+          material: "hedge",
+          shape: { kind: "box", size: [2, 0.7, 0.7], position: [0, 0.35, -40] },
+        },
+      ]),
+    });
+    const hit = report.findings.find((finding) => finding.objectId === "H01/test/hedge-outside");
+    expect(hit?.severity).toBe("high");
+    expect(hit?.category).toBe("boundary");
+  });
+
+  it("flags an object placed inside its own house", () => {
+    const report = validateScene({
+      entries,
+      vegetation: false,
+      layout: withExtra(() => [
+        {
+          id: "H01/test/planter",
+          group: "furniture",
+          material: "stone",
+          shape: { kind: "box", size: [1.4, 0.8, 1.4], position: [0, 0.4, 0] },
+        },
+      ]),
+    });
+    const hit = report.findings.find((finding) => finding.objectId === "H01/test/planter");
+    expect(hit?.severity).toBe("high");
+    expect(hit?.category).toBe("overlap");
+    expect(hit?.message).toContain("inside its own house");
+  });
+
+  it("flags planting on top of a pool deck", () => {
+    const report = validateScene({
+      entries,
+      vegetation: false,
+      layout: withExtra((input) =>
+        input.pool
+          ? [
+              {
+                id: "H01/test/tree-in-pool",
+                group: "planting",
+                material: "trunk",
+                shape: { kind: "cylinder", size: [0.1, 0.14, 2], position: [input.pool.x, 1, input.pool.z] },
+              },
+            ]
+          : [],
+      ),
+    });
+    const hit = report.findings.find((finding) => finding.objectId === "H01/test/tree-in-pool");
+    // H01 may have no pool; the finding must appear for whichever plot does.
+    const poolPlot = SEED_UNITS.find((unit) => {
+      const depth = plotRearDepth({ x: unit.position.x, z: unit.position.z }, unit.position.rotationY, unit.typology);
+      return poolFor(unit.code, unit.typology, depth) !== null;
+    });
+    const pooled = validateScene({
+      entries: poolPlot ? [poolPlotEntry(poolPlot)] : entries,
+      vegetation: false,
+      layout: withExtra((input) =>
+        input.pool
+          ? [
+              {
+                id: `${input.code}/test/tree-in-pool`,
+                group: "planting",
+                material: "trunk",
+                shape: { kind: "cylinder", size: [0.1, 0.14, 2], position: [input.pool.x, 1, input.pool.z] },
+              },
+            ]
+          : [],
+      ),
+    });
+    expect(hit === undefined || hit.severity === "high").toBe(true);
+    expect(pooled.findings.some((finding) => finding.message.includes("overlaps the pool deck"))).toBe(true);
+  });
+});
+
+function poolPlotEntry(unit: (typeof SEED_UNITS)[number]): SceneEntryInput {
+  return {
+    property: { code: unit.code, typology: unit.typology },
+    position: { x: unit.position.x, z: unit.position.z },
+    rotationY: unit.position.rotationY,
+  };
+}
+
+describe("garden planting — measured from the plot, not the façade", () => {
+  const plots = entries.map((entry) => {
+    const position = { x: entry.position.x, z: entry.position.z };
+    const rearDepth = plotRearDepth(position, entry.rotationY, entry.property.typology);
+    const plan = garagePlan(position, entry.rotationY, entry.property.typology);
+    const pool = poolFor(entry.property.code, entry.property.typology, rearDepth);
+    const parts = plotParts({
+      code: entry.property.code,
+      rearDepth,
+      walls: plotWallsFor(entry.property.typology, rearDepth),
+      garage: plan.garage,
+      pool,
+      seed: 1,
+      lowQuality: false,
+    });
+    const bounds = (id: string) => {
+      const part = parts.find((candidate) => candidate.id === id);
+      return part ? partBounds(part, position, entry.rotationY) : null;
+    };
+    const planting = parts.filter((part) => part.group === "planting");
+    const boundary = parts.filter((part) => part.group === "boundary");
+    const plotOuter = boundary.reduce(
+      (rect, part) => {
+        const b = partBounds(part, position, entry.rotationY);
+        return {
+          minX: Math.min(rect.minX, b.minX),
+          maxX: Math.max(rect.maxX, b.maxX),
+          minZ: Math.min(rect.minZ, b.minZ),
+          maxZ: Math.max(rect.maxZ, b.maxZ),
+        };
+      },
+      { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity },
+    );
+    return { code: entry.property.code, parts, planting, plotOuter, position, rotationY: entry.rotationY, bounds, pool };
+  });
+
+  it("gives every plot some garden planting", () => {
+    for (const plot of plots) expect(plot.planting.length).toBeGreaterThan(0);
+  });
+
+  it("never puts a plant outside its own boundary walls", () => {
+    for (const plot of plots) {
+      for (const part of plot.planting) {
+        const b = partBounds(part, plot.position, plot.rotationY);
+        expect(b.minX, `${part.id} · minX`).toBeGreaterThanOrEqual(plot.plotOuter.minX - 0.02);
+        expect(b.maxX, `${part.id} · maxX`).toBeLessThanOrEqual(plot.plotOuter.maxX + 0.02);
+        expect(b.minZ, `${part.id} · minZ`).toBeGreaterThanOrEqual(plot.plotOuter.minZ - 0.02);
+        expect(b.maxZ, `${part.id} · maxZ`).toBeLessThanOrEqual(plot.plotOuter.maxZ + 0.02);
+      }
+    }
+  });
+
+  it("never puts a plant on a pool deck", () => {
+    for (const plot of plots) {
+      const deckPart = plot.parts.find((part) => part.id.endsWith("/pool/deck"));
+      if (!deckPart) continue;
+      const deck = partBounds(deckPart, plot.position, plot.rotationY);
+      for (const part of plot.planting) {
+        const b = partBounds(part, plot.position, plot.rotationY);
+        const w = Math.min(b.maxX, deck.maxX) - Math.max(b.minX, deck.minX);
+        const d = Math.min(b.maxZ, deck.maxZ) - Math.max(b.minZ, deck.minZ);
+        expect(w <= 0 || d <= 0, `${part.id} overlaps the deck`).toBe(true);
+      }
+    }
+  });
+
+  it("keeps the house mesh free of vegetation", () => {
+    // The baked planting was removed from house-geometry: a house must not
+    // carry trees, because it has no idea where the plot walls are.
+    const source = readFileSync(new URL("../src/components/three/house-geometry.ts", import.meta.url), "utf8");
+    expect(source).not.toContain("addPlanting");
+    expect(source).not.toContain("foliage");
+  });
+});
+
 describe("plot geometry — parts are placed by rule, not by eye", () => {
   const unit = SEED_UNITS[0]!;
   const rearDepth = plotRearDepth({ x: unit.position.x, z: unit.position.z }, unit.position.rotationY, unit.typology);
@@ -230,6 +401,8 @@ describe("plot geometry — parts are placed by rule, not by eye", () => {
   it("merges into a handful of draw calls, not one per part", () => {
     const materials = new Set(parts.map((part) => part.material));
     expect(parts.length).toBeGreaterThan(20);
-    expect(materials.size).toBeLessThanOrEqual(10);
+    // Walls, carport, two cars, pool, deck, furniture, hedge and three foliage
+    // variants: thirteen materials is the ceiling, merged into one mesh each.
+    expect(materials.size).toBeLessThanOrEqual(14);
   });
 });

@@ -105,6 +105,11 @@ export interface SceneReport {
 
 export interface ValidateOptions {
   entries: SceneEntryInput[];
+  /**
+   * Test seam: replace the plot layout generator. Production callers never set
+   * this; the tests use it to prove that the rules fire on broken layouts.
+   */
+  layout?: (input: PlotPartsInput) => Part[];
   /** Include greenery checks (scatter is deterministic, so this is cheap). */
   vegetation?: boolean;
   lowQuality?: boolean;
@@ -117,6 +122,8 @@ export const SPATIAL_RULES = [
   "A plot may not intrude on a neighbouring plot's house, carport or pool.",
   "Pool furniture must sit on the pool deck; canopies may overhang it if they clear the walls vertically.",
   "Vegetation may only live in planting beds — never inside a plot, on a road, on a court or in the lagoon.",
+  "Garden planting stays inside its own plot, clear of the pool water and deck.",
+  "No object belonging to a plot may occupy the volume of its own house.",
   "Sports courts must be disjoint, inside the perimeter and clear of every house.",
   "Street lamps belong beside the carriageway, never on it and never inside a plot.",
 ] as const;
@@ -186,7 +193,7 @@ function drivewayBounds(driveway: Driveway): Rect {
 
 const SEVERITY_ORDER: Record<Severity, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 
-export function validateScene({ entries, vegetation = true, lowQuality = true }: ValidateOptions): SceneReport {
+export function validateScene({ entries, vegetation = true, lowQuality = true, layout = plotParts }: ValidateOptions): SceneReport {
   const findings: Finding[] = [];
   const houses = new Map<string, Rect>();
   for (const entry of entries) houses.set(entry.property.code, houseRect(entry));
@@ -198,7 +205,7 @@ export function validateScene({ entries, vegetation = true, lowQuality = true }:
     const pool = poolFor(entry.property.code, entry.property.typology, rearDepth);
     const seed = Number(entry.property.code.replace(/\D/g, "")) || 1;
     const input: PlotPartsInput = { code: entry.property.code, rearDepth, walls, garage, pool, seed, lowQuality };
-    const parts = plotParts(input);
+    const parts = layout(input);
     const interior = plotInterior(entry, walls);
     return {
       entry,
@@ -281,7 +288,7 @@ export function validateScene({ entries, vegetation = true, lowQuality = true }:
   let plotTriangles = 0;
 
   for (const plot of plots) {
-    const { entry, garage, pool, parts } = plot;
+    const { entry, garage, pool, parts, interior } = plot;
     const code = entry.property.code;
     partCount += parts.length;
     plotDrawCalls += new Set(parts.map((part) => part.material)).size;
@@ -387,6 +394,65 @@ export function validateScene({ entries, vegetation = true, lowQuality = true }:
           suggestion: "Check frontGap against the kerb; every plot should reach garageFor().",
           confirmed: true,
         });
+      }
+    }
+
+    // Nothing a plot owns may sit inside its own house. This is the rule that
+    // catches "the hedge grows through the living room" and "the pool is in the
+    // kitchen" — the two defects users actually report.
+    const ownHouse = houses.get(code)!;
+    for (const { part, bounds } of classified) {
+      if (part.group === "boundary") continue;
+      const area = intersectArea(bounds, ownHouse);
+      if (!area) continue;
+      const footprintArea = (area.maxX - area.minX) * (area.maxZ - area.minZ);
+      if (footprintArea < 0.5) continue;
+      findings.push({
+        objectId: part.id,
+        subject: code,
+        category: "overlap",
+        severity: "high",
+        message: `${part.id} sits inside its own house (${footprintArea.toFixed(1)} m²).`,
+        footprint: footprintOf(area),
+        suggestion: "Place the object relative to the garden band, not the façade: the house volume is never buildable.",
+        confirmed: true,
+      });
+    }
+
+    // Garden planting must live inside the plot and clear of the pool.
+    for (const { part, bounds } of classified) {
+      if (part.group !== "planting") continue;
+      const inside =
+        bounds.minX >= interior.minX - 0.05 &&
+        bounds.maxX <= interior.maxX + 0.05 &&
+        bounds.minZ >= interior.minZ - 0.05 &&
+        bounds.maxZ <= interior.maxZ + 0.05;
+      if (!inside) {
+        findings.push({
+          objectId: part.id,
+          subject: code,
+          category: "boundary",
+          severity: "high",
+          message: `${part.id} grows outside its plot.`,
+          footprint: footprintOf(bounds),
+          suggestion: "Place garden planting from the plot walls inward, with the canopy radius subtracted.",
+          confirmed: true,
+        });
+      }
+      if (pool) {
+        const deck = classified.find(({ part: candidate }) => candidate.id === `${code}/pool/deck`);
+        if (deck && overlaps(bounds, deck.bounds)) {
+          findings.push({
+            objectId: part.id,
+            subject: code,
+            category: "clearance",
+            severity: "high",
+            message: `${part.id} overlaps the pool deck.`,
+            footprint: footprintOf(intersectArea(bounds, deck.bounds) ?? bounds),
+            suggestion: "Keep planting behind the pool deck: tree canopy + 0.25 m of air.",
+            confirmed: true,
+          });
+        }
       }
     }
 

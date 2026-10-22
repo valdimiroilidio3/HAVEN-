@@ -250,7 +250,7 @@ function ShrubBorder({ exclude }: { exclude: Rect[] }) {
       for (let z = bed.minZ + step / 2; z < bed.maxZ; z += step) out.push({ x: bed.maxX - 0.6, z });
     }
     return out.slice(0, 90);
-  }, []);
+  }, [exclude]);
   return (
     <group>
       {positions.map((position, index) => (

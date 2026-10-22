@@ -81,8 +81,11 @@ the smaller ones — and eight of the thirteen have a pool with a timber sun dec
 and a parasol; the rest get a planted garden.
 
 `docs/masterplan.png` is a rendered top-down plan of exactly this layout; regenerate it with
-`npx tsx scripts/render-plan.ts` after any masterplan change, and `npx vitest run` to check that
-nothing overlaps. Clicking a house eases the camera into a
+`npx tsx scripts/render-plan.ts` after any masterplan change. Placement rules are machine-checked:
+`npm run audit:3d` walks every plot, part and plant and fails the build on a critical or high finding,
+`/admin/scene` shows the same report for the published scene, and the 3D editor re-runs it live
+while a house is dragged. The `Perf` button in the viewer opens the renderer's own frame statistics
+(draw calls, triangles, FPS) as measured in the browser. Clicking a house eases the camera into a
 nine-second 360° orbit and then lets you orbit freely, and a day/night switch retints sky, lighting,
 stars, glass and pool water across the site and the interiors. The interiors are furnished and delivered with a kitchen and laundry appliance
 pack (fridge, induction hob, oven, extractor, dishwasher, microwave, washer/dryer), which can be
@@ -95,7 +98,9 @@ reservation records who reserved, until when, and the deposit.
 ### 3D editing and publishing
 
 Draft and published coordinates are stored side by side (`x/z/rotation_y` vs
-`published_x/published_z/published_rotation_y`). The public viewer reads only published values, so
+`published_x/published_z/published_rotation_y`). While dragging, the editor validates the draft
+against the same rules as the audit and tints a conflicting house red, so a placement mistake is
+visible before it is saved. The public viewer reads only published values, so
 an unfinished edit can never leak to the site. Saving and publishing are separate permissions:
 managers can prepare drafts, only administrators can publish. Overlapping footprints are rejected
 server-side before a draft is stored.
@@ -168,11 +173,15 @@ npm run typecheck   # tsc --noEmit, strict
 npm run lint        # next lint, no errors
 npm test            # vitest unit tests
 npm run smoke       # data-layer end-to-end checks (throwaway SQLite)
+npm run audit:3d    # spatial audit of the masterplan (fails on critical/high)
 npm run check       # all of the above plus a production build
 ```
 
 The smoke suite covers permission boundaries, status/reservation transitions, draft-vs-published
-scene separation, consent enforcement, viewing lead times and the public enquiry pipeline.
+scene separation, consent enforcement, viewing lead times and the public enquiry pipeline. The
+spatial suite (`tests/scene-validation.test.ts`, `tests/plot-geometry.test.ts`) checks that the
+validator passes the shipped scene, that it fires on deliberately broken ones, and that the merged
+plot meshes are sane. The scene audit is documented in [`docs/3D-AUDIT.md`](docs/3D-AUDIT.md).
 
 ---
 
