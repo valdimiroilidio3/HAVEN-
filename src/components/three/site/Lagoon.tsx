@@ -10,7 +10,12 @@ import { getMaterials } from "../materials";
 import { buildLagoonGeometries, deckPavingGeometry } from "./lagoon-geometry";
 
 /**
- * The condominium lagoon.
+ * The condominium pool.
+ *
+ * The module and the `SITE.lagoon` key keep their names — that identifier is the
+ * spatial key shared by the plan, the rules and the viewer, and renaming it would
+ * be repository-wide churn with no spatial gain. The programme changed: mosaic
+ * basin, clean water, no aquatic planting.
  *
  * Everything here is derived from `lib/3d/lagoon.ts`: the deck, coping, boardwalk,
  * steps, pavilion, planting and lights are declarative parts merged per material

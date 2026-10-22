@@ -554,3 +554,64 @@ topSurfaceY(rx ± 0.2, 0)       → 0.02 / 0.08  aperture exactly at the rim
 Data untouched: `lagoon: 134 parts → 11 draw calls`, findings still 0/0/1/0, and
 the lagoon rules (`insideDeckEllipse`, `onDeckRing`) are unchanged. What changed
 is only how the paved band is triangulated.
+
+## 15. The lagoon becomes a pool
+
+Client decision: *"instead of paved, it should be a swimming pool"* — same
+position, same dimensions, deck unchanged (5 m). The previous round stopped the
+paving from covering the water; this round changes what the water *is*.
+
+### 15.1 What was wrong
+
+| Element | Before | After |
+| --- | --- | --- |
+| Programme | Landscape lagoon | Swimming pool |
+| Reeds | 4 clusters, up to 9 stems each, standing in the basin | removed |
+| Lily pads | 6 floating discs | removed |
+| Rim rocks | 4 boulders on the coping | removed |
+| Basin | Mosaic wall, tiled floor, shallow shelf | unchanged — already tiled |
+| Deck | 5 m paving, loungers, parasols, pavilion, boardwalk | unchanged |
+| Steps | Four wide steps with handrails into the water | unchanged |
+
+Aquatic planting is not a detail that can sit next to a pool: reeds inside a
+chlorinated basin are a contradiction, and they were the main visual cue saying
+"pond". They were deleted from the data generator, not hidden — the validator has
+no exemption left for them.
+
+### 15.2 Rules
+
+The lagoon rules were rewritten around the pool programme:
+
+- The basin holds **water and swimmers only**: no planting, furniture or
+  structure inside the water ellipse; deck planting stays on the coping. *(high)*
+- Only the steps may enter the basin. *(high)*
+- Deck furniture and lighting stay on the deck ring. *(medium)*
+- The old rule "reeds and lilies grow in the water" is gone: there is nothing
+  left to grow.
+
+`POOL` in `lib/3d/lagoon.ts` now carries `programme: "swimming-pool"` and a
+`depth` **derived** from the basin data, so the render, the rules and the tests
+read the same number instead of a comment.
+
+### 15.3 Measured
+
+```
+lagoon: 127 parts → 9 draw calls   (was 134 / 11: reeds, lilies and rocks removed)
+findings: 0 critical · 0 high · 1 medium · 0 low   (the medium is H13, unchanged)
+tests: 153/153 across 14 files (+1 net: two water-plant tests replaced by two pool tests)
+build: compiled successfully
+```
+
+### 15.4 Known limitation, recorded not hidden
+
+The basin was cut for a landscape lagoon: **0.64 m** from floor to waterline.
+That is paddling depth; a swimming pool is 1.2–1.8 m. Deepening it means
+re-cutting the basin, the shelf and the step run — approved geometry, and a
+change that should be authorised, not slipped in under a rendering request. The
+pool reads correctly from every view (clean tiled water, no planting, waterline
+against stone), but a swimmer would notice. `POOL.depth` exposes the number so
+the decision can be made explicitly.
+
+The element keeps its `SITE.lagoon` identifier: that key is shared by the plan,
+the rules, the editor and the viewer, and renaming it is repository-wide churn
+with no spatial benefit. Public copy now says "pool".

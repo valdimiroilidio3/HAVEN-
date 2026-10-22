@@ -150,7 +150,7 @@ export const SPATIAL_RULES = [
   "Street lamps belong beside the carriageway, never on it and never inside a plot.",
   "Lagoon deck furniture and lighting stand on the deck ring: outside the water, inside the paving.",
   "Only the steps enter the lagoon basin; the pavilion and boardwalk stay on the deck.",
-  "Reeds and lilies grow in the water; planters and rim rocks stay on the coping.",
+  "The basin holds water and swimmers only: no planting, furniture or structure inside the water; deck planting stays on the coping.",
   "Every front door must be reachable on foot from the gate; no path may be severed.",
   "Footpaths keep clear of carriageways; where they must cross one, the crossing is marked.",
   "A footpath may enter its own plot's front garden, never a neighbour's plot or any house.",
@@ -668,8 +668,8 @@ export function validateScene({
     ];
     const isStep = part.id.startsWith("lagoon/steps/");
     const isCanopy = part.id.endsWith("/canopy");
-    const isWaterPlant = part.id.startsWith("lagoon/reed/") || part.id.startsWith("lagoon/lily/");
-    const isDeckPlant = part.group === "planting" && !isWaterPlant;
+    // The basin is a swimming pool: anything planted belongs on the deck.
+    const isDeckPlant = part.group === "planting";
 
     const isStairPart = part.id.startsWith("lagoon/steps/");
 
@@ -699,19 +699,6 @@ export function validateScene({
       }
     }
 
-    if (isWaterPlant && !inLagoonWater(centre.x, centre.z, 0.99)) {
-      findings.push({
-        objectId: part.id,
-        subject: "lagoon",
-        category: "grounding",
-        severity: "low",
-        message: `${part.id} grows out of the water.`,
-        footprint: footprintOf(bounds),
-        suggestion: "Reeds and lilies belong inside the basin, at a radius factor below 0.95.",
-        confirmed: true,
-      });
-    }
-
     if (isDeckPlant && inLagoonWater(centre.x, centre.z, 0.995)) {
       findings.push({
         objectId: part.id,
@@ -720,7 +707,7 @@ export function validateScene({
         severity: "medium",
         message: `${part.id} is planted in the water.`,
         footprint: footprintOf(bounds),
-        suggestion: "Planters and rim rocks sit on the coping, outside the water ellipse.",
+        suggestion: "Deck planting sits on the coping, outside the water ellipse; the basin is water only.",
         confirmed: true,
       });
     }

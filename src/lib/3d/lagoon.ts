@@ -2,7 +2,15 @@ import { SITE } from "./site";
 import type { Part } from "./parts";
 
 /**
- * The condominium lagoon, described as data.
+ * The condominium swimming pool, described as data.
+ *
+ * The site element keeps its identifier (`SITE.lagoon`) because that id is the
+ * spatial key used by the plan, the rules, the tests and the public viewer;
+ * renaming it would be a repository-wide change with no spatial benefit. What
+ * changed is the programme: this is a chlorinated pool with a mosaic basin, not
+ * a planted lagoon. Aquatic planting (reeds, lilies) and rim rocks were removed
+ * — a pool holds water and swimmers, nothing else. Deck planting, loungers,
+ * parasols, the pavilion and the steps stay.
  *
  * Same contract as `parts.ts`: the renderer merges these descriptors per
  * material, and the validator derives bounds from them. That matters more here
@@ -29,8 +37,8 @@ const { radiusX: RX, radiusZ: RZ, deck: DECK } = SITE.lagoon;
  */
 export function onDeckRing(angleDeg: number, t: number): { x: number; z: number } {
   const a = (angleDeg * Math.PI) / 180;
-  // `t` is deliberately not clamped: negative walks into the basin (reeds, lilies)
-  // and values above 1 are useful for testing the deck edge.
+  // `t` is deliberately not clamped: negative walks into the basin (the steps and
+  // the waterline) and values above 1 are useful for testing the deck edge.
   const bulge = DECK * t;
   return { x: Math.cos(a) * (RX + bulge), z: Math.sin(a) * (RZ + bulge) };
 }
@@ -275,80 +283,7 @@ function bollards(count: number): Part[] {
   return parts;
 }
 
-/* ── Planting and water features ──────────────────────────────────────── */
-
-function reeds(lowQuality: boolean): Part[] {
-  const parts: Part[] = [];
-  const clusters = lowQuality ? [140, 320] : [140, 175, 300, 335];
-  clusters.forEach((angle, cluster) => {
-    const origin = onDeckRing(angle, -0.09);
-    const stems = lowQuality ? 5 : 9;
-    for (let i = 0; i < stems; i += 1) {
-      const spread = 0.55;
-      const dx = Math.cos((i / stems) * Math.PI * 2) * spread * (0.4 + ((i * 7) % 5) / 8);
-      const dz = Math.sin((i / stems) * Math.PI * 2) * spread * (0.4 + ((i * 3) % 5) / 8);
-      const height = 0.75 + ((i * 5) % 7) * 0.09;
-      // Reeds must stand in the water: drop any stem the spread pushes onto the coping.
-      if (!inLagoonWater(origin.x + dx + SITE.lagoon.x, origin.z + dz + SITE.lagoon.z, 0.95)) continue;
-      parts.push({
-        id: `lagoon/reed/${cluster}-${i}`,
-        group: "planting",
-        material: "reed",
-        shape: { kind: "cylinder", size: [0.018, 0.03, height], position: [origin.x + dx, height / 2 - 0.05, origin.z + dz] },
-      });
-    }
-  });
-  return parts;
-}
-
-function lilyPads(): Part[] {
-  const parts: Part[] = [];
-  // Inside the water: negative `t` walks into the basin.
-  const pads = [
-    [104, -0.1, 0.33],
-    [110, -0.06, 0.27],
-    [116, -0.12, 0.36],
-    [122, -0.07, 0.29],
-    [128, -0.1, 0.24],
-    [134, -0.05, 0.31],
-  ] as const;
-  pads.forEach(([angle, t, size], index) => {
-    const point = onDeckRing(angle, t);
-    parts.push({
-      id: `lagoon/lily/${index}`,
-      group: "planting",
-      material: "lily",
-      shape: { kind: "cylinder", size: [size, size, 0.02], position: [point.x, 0.13, point.z] },
-    });
-  });
-  return parts;
-}
-
-function rimRocks(): Part[] {
-  const parts: Part[] = [];
-  const rocks = [
-    [-205, 0.1, 0.5],
-    [-196, 0.04, 0.34],
-    [-58, 0.08, 0.44],
-    [-50, 0.03, 0.3],
-  ] as const;
-  rocks.forEach(([angle, t, size], index) => {
-    const point = onDeckRing(angle, t);
-    parts.push({
-      id: `lagoon/rock/${index}`,
-      group: "planting",
-      material: "rock",
-      shape: {
-        kind: "icosahedron",
-        size: [size],
-        position: [point.x, size * 0.45, point.z],
-        scale: [1.25, 0.72, 1],
-        rotation: [0.3 * index, 0.8 * index, 0],
-      },
-    });
-  });
-  return parts;
-}
+/* ── Deck planting ────────────────────────────────────────────────────── */
 
 function planters(): Part[] {
   const parts: Part[] = [];
@@ -505,9 +440,6 @@ export function lagoonLayout({ lowQuality = false }: LagoonPartsInput = {}): Lag
     ...bollards(lowQuality ? 8 : 12),
     ...pavilion(lowQuality),
     ...planters(),
-    ...reeds(lowQuality),
-    ...(lowQuality ? [] : lilyPads()),
-    ...rimRocks(),
   ];
 
   // Deck furniture: a row of loungers on the west deck, parasols between them.
@@ -548,4 +480,21 @@ export const LAGOON_WATER = {
   y: 0.02,
   /** Basin floor, below the water. */
   floorY: -0.62,
+} as const;
+
+/**
+ * What the basin is.
+ *
+ * The element is now a swimming pool, but its basin was cut for a landscape
+ * lagoon: 0.64 m from floor to waterline. That is paddling depth, not swimming
+ * depth (1.2–1.8 m), and deepening it means re-cutting the basin, the shelf and
+ * the steps — approved geometry that is not mine to change on a rendering
+ * request. It is recorded here as a derived number so nobody has to guess, and
+ * flagged as a limitation in the round report: the pool reads correctly from
+ * every view, but a swimmer would notice the depth.
+ */
+export const POOL = {
+  programme: "swimming-pool" as const,
+  /** Measured from the data, never asserted: floor to waterline. */
+  depth: Number((LAGOON_WATER.y - LAGOON_WATER.floorY).toFixed(2)),
 } as const;

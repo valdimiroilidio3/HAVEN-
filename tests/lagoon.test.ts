@@ -3,6 +3,8 @@ import { SEED_UNITS } from "@/lib/domain/inventory";
 import { SITE } from "@/lib/3d/site";
 import { partBounds } from "@/lib/3d/parts";
 import {
+  POOL,
+  LAGOON_WATER,
   angleDistance,
   inLagoonWater,
   insideDeckEllipse,
@@ -54,10 +56,11 @@ describe("lagoon ring maths", () => {
 describe("lagoon layout", () => {
   const layout = lagoonLayout({ lowQuality: false });
 
-  it("builds a full scene of parts", () => {
+  it("builds a full pool deck scene of parts", () => {
     expect(layout.parts.length).toBeGreaterThan(100);
     expect(layout.counts.furniture).toBeGreaterThan(40);
-    expect(layout.counts.planting).toBeGreaterThan(10);
+    // Planting is deck planting only: two planters, box + hedge each.
+    expect(layout.counts.planting).toBe(4);
     expect(layout.counts.lights).toBeGreaterThan(6);
     expect(new Set(layout.parts.map((part) => part.id)).size).toBe(layout.parts.length);
   });
@@ -71,9 +74,10 @@ describe("lagoon layout", () => {
     }
   });
 
-  it("keeps every part on the paving, except the reeds and lilies", () => {
+  it("keeps every part on the paving, except the steps", () => {
     for (const part of layout.parts) {
-      if (part.id.startsWith("lagoon/reed/") || part.id.startsWith("lagoon/lily/") || part.id.startsWith("lagoon/steps/")) continue;
+      // The steps descend into the basin on purpose; nothing else leaves the deck.
+      if (part.id.startsWith("lagoon/steps/")) continue;
       const bounds = world(part);
       for (const [x, z] of [
         [bounds.minX, bounds.minZ],
@@ -86,11 +90,21 @@ describe("lagoon layout", () => {
     }
   });
 
-  it("plants the reeds and lilies in the water, not on the coping", () => {
+  it("is a swimming pool: no aquatic planting, no rim rocks", () => {
+    expect(POOL.programme).toBe("swimming-pool");
+    const aquatic = layout.parts.filter((part) => /^lagoon\/(reed|lily|rock)\//.test(part.id));
+    expect(aquatic).toEqual([]);
+    // The water is still water: the basin keeps its ellipse and its depth.
+    expect(POOL.depth).toBeCloseTo(0.64, 2);
+    expect(LAGOON_WATER.radiusX).toBe(SITE.lagoon.radiusX);
+  });
+
+  it("lets nothing but the steps into the basin", () => {
     for (const part of layout.parts) {
-      if (!part.id.startsWith("lagoon/reed/") && !part.id.startsWith("lagoon/lily/")) continue;
+      if (part.id.startsWith("lagoon/steps/") || part.group === "deck") continue;
       const bounds = world(part);
-      expect(inLagoonWater((bounds.minX + bounds.maxX) / 2, (bounds.minZ + bounds.maxZ) / 2, 0.99), part.id).toBe(true);
+      const centre = { x: (bounds.minX + bounds.maxX) / 2, z: (bounds.minZ + bounds.maxZ) / 2 };
+      expect(inLagoonWater(centre.x, centre.z, 0.995), part.id).toBe(false);
     }
   });
 

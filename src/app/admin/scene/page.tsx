@@ -120,8 +120,8 @@ export default async function AdminSceneHealthPage() {
               <Row label="Pools" value={report.checked.pools} />
               <Row label="Carports" value={report.checked.carports} />
               <Row label="Plot parts" value={report.checked.parts} />
-              <Row label="Lagoon parts" value={report.checked.lagoonParts} />
-              <Row label="Lagoon draw calls" value={report.checked.lagoonDrawCalls} />
+              <Row label="Pool parts" value={report.checked.lagoonParts} />
+              <Row label="Pool draw calls" value={report.checked.lagoonDrawCalls} />
               <Row label="Plot draw calls" value={report.checked.plotDrawCalls} />
               <Row label="Plot triangles" value={report.checked.plotTriangles} />
               <Row label="Trees" value={report.checked.trees} />
@@ -130,7 +130,7 @@ export default async function AdminSceneHealthPage() {
             <p className="mt-3 flex items-center gap-2 text-[0.7rem] text-ink-500">
               <Gauge className="h-3.5 w-3.5" aria-hidden />
               {report.checked.plots > 0
-                ? `${(report.checked.plotDrawCalls / report.checked.plots).toFixed(1)} draw calls per plot · lagoon in ${report.checked.lagoonDrawCalls}`
+                ? `${(report.checked.plotDrawCalls / report.checked.plots).toFixed(1)} draw calls per plot · pool in ${report.checked.lagoonDrawCalls}`
                 : "No plot placed yet"}
             </p>
           </AdminCard>

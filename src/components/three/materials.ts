@@ -38,7 +38,7 @@ export interface HavenMaterials {
   net: THREE.MeshStandardMaterial;
   park: THREE.MeshStandardMaterial;
   flowers: THREE.MeshStandardMaterial;
-  /** Deep lagoon water, clearer and greener than a private pool. */
+  /** Communal pool water: deeper and greener than a private plunge pool. */
   poolWater: THREE.MeshStandardMaterial;
   /** Car paint variants for the parking bays. */
   carPaint: THREE.MeshStandardMaterial[];
