@@ -721,3 +721,102 @@ unchanged.
 - **Not verified in a browser.** Framing is tested geometrically (camera in
   front, outside the footprint, roof inside the frame) and elevations are
   rendered offline; the WebGL result itself has not been seen.
+
+## 17. Os carros nos alpendres
+
+### 17.1 O que estava mal
+
+O carro era **cinco caixas**: chassi, ombro, cabine de vidro, tejadilho e quatro
+cilindros. Lia-se como uma furgoneta — e pior, o merge por material fechava o
+volume, pelo que os faróis colocados dentro do corpo nunca apareciam.
+
+Foi ainda encontrado um defeito de medição: `partTriangleBudget` não tinha caso
+para `loft` (a primitiva nova), pelo que os cascos dos carros custavam **zero**
+triângulos no `audit:3d`. O orçamento estava a subestimar a cena em silêncio.
+
+### 17.2 O que mudou
+
+**Primitiva nova — `loft`.** Um corpo de carro não é uma caixa: é uma pilha de
+secções varridas ao longo do comprimento. `src/components/three/site/loft-geometry.ts`
+gera um casco fechado a partir de secções de superelipse (expoente ~4: lados
+planos, ombros suaves), com:
+
+- **tumblehome** — `topHalfWidth` fecha a secção em direcção ao tejadilho, senão a
+  cabine vira um domo;
+- normais suaves por anel, tampas com vértices próprios para a silhueta ficar viva;
+- UVs, sem as quais `mergeGeometries` devolve `null` e o carro desaparece **sem
+  erro** — exactamente o tipo de falha silenciosa que o protocolo proíbe.
+
+**Dois corpos** (`src/lib/3d/car.ts`): um coupé fastback baixo para os T1/T2 e um
+quatro-portas alto para os T3/T4 (que têm alpendre duplo). Proporções de referência:
+capô longo, cabine recuada, balanços curtos, ombros largos, rodas a encher os
+passos. 4,55 × 1,86 × 1,32 m e 4,80 × 1,90 × 1,60 m — dentro da baía de 3,6 m e
+dos 2,9 m entre os dois carros do alpendre duplo.
+
+**Acessórios medidos contra a carroçaria local.** Cada grelha, farol, espelho,
+spoiler e saída de escape lê a secção do corpo **no seu próprio z**
+(`bodyAt`), nunca a largura máxima do carro. Foi o erro da primeira tentativa:
+peças dimensionadas pelo ponto mais largo flutuavam à frente do nariz afilado e
+acima da cauda descendente.
+
+**Assentamento:** a base da cabine é derivada do topo da carroçaria
+(`max(bottom, body.top + 8 mm)`); um vidro que mergulha no casco deixa a pintura
+ver-se através dele e cria uma cunha escura no flanco.
+
+**Rodas:** o flanco do pneu é a peça mais saliente; jante, raios e cubo ficam
+recesseados. Uma peça a sobressair do painel transforma-se numa barbatana assim
+que o casco é fechado. Cinco raios, não 18 segmentos de raios.
+
+**Ajuste uniforme:** quando a baía é mais curta do que o corpo, o carro encolhe
+`fit` em todos os eixos. O código anterior escalava só Z e transformava as rodas
+em elipses.
+
+### 17.3 Prova
+
+`scripts/render-cars.ts` rasteriza a geometria real, pelo mesmo
+`mergePartsByMaterial` que o browser usa, com câmara em perspectiva e Gouraud:
+
+- `docs/cars-before-after.png` — antes (5 caixas) e depois, por tipo;
+- `docs/cars-before-after-views.png` — frente 3/4, lateral e traseira 3/4.
+
+**Limitação declarada:** o rasterizador ordena triângulos por centróide. Em
+superfícies quase coplanares — a jante contra o pneu, o painel lateral contra o
+vidro — isso produz serrilha que o three.js **não** tem (tem z-buffer). Os testes
+verificam numericamente o que a imagem não consegue provar: o pneu é a peça mais
+exterior, a jante e os raios estão dentro dele, e nada desce abaixo da cota.
+
+### 17.4 Custo medido
+
+```
+plots 213 draw calls (16.4/plot, era 16.0) · 46 208 triângulos (era 15 568)
+```
+
+O aumento é dos cascos: ~2,4 mil triângulos por carro, 13 casas com 1–2 carros.
+Os materiais são os que já existiam (`carPaint0–2`, `carGlass`, `charcoal`,
+`metal`, `white`), por isso o número de draw calls por lote mal mexe: +5 no total.
+
+### 17.5 Verificação
+
+| Gate | Resultado |
+| --- | --- |
+| `tsc --noEmit` | limpo |
+| `npx vitest run` | **253/253** (17 ficheiros; +18 em `tests/car-geometry.test.ts`) |
+| `npm run audit:3d` | 0 critical / 0 high / 1 medium (H13) / 0 low |
+| `npm run lint` | limpo |
+
+O teste novo fixa exactamente as falhas que a vista não apanha: enrolamento do
+casco (volume assinado **positivo** — invertido, o `FrontSide` mostra o interior
+do carro), atributos obrigatórios no merge, cabine assente em cada estação, nada
+abaixo da cota, rodas redondas sob escala, simetria na baía e contagem de
+triângulos do loft.
+
+### 17.6 Não feito
+
+- **Não são modelos de um carro específico.** Sem marca, sem matrícula, sem
+  logótipo: são props representativos. As imagens de referência que recebi
+  (Ferrari Purosangue, Mansory Pugnator, Roma, 12Cilindri) informaram
+  proporções — não foram importadas, nem podiam: sem dependências pesadas e sem
+  assets de terceiros.
+- **Sem interiores, sem aberturas, sem faróis acesos.** Os vidros são opacos por
+  desenho, para não se ver o vazio.
+- **Não visto em WebGL.** Como no resto desta ronda.

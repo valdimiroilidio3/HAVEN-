@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { plotParts, type Part, type PartMaterial, type PlotPartsInput } from "@/lib/3d/parts";
+import { loftGeometry } from "./loft-geometry";
 
 /**
  * Turns a plot's part descriptors into one merged BufferGeometry per material.
@@ -29,16 +30,18 @@ function evictIfNeeded(): void {
 }
 
 function geometryFor(part: Part): THREE.BufferGeometry | null {
-  const { kind, size } = part.shape;
+  const { kind, size, segments } = part.shape;
   switch (kind) {
     case "box":
       return new THREE.BoxGeometry(size[0] ?? 0.1, size[1] ?? 0.1, size[2] ?? 0.1);
     case "cylinder":
-      return new THREE.CylinderGeometry(size[0] ?? 0.1, size[1] ?? 0.1, size[2] ?? 0.1, 12);
+      return new THREE.CylinderGeometry(size[0] ?? 0.1, size[1] ?? 0.1, size[2] ?? 0.1, segments ?? 12);
     case "icosahedron":
       return new THREE.IcosahedronGeometry(size[0] ?? 0.1, 1);
     case "torus":
-      return new THREE.TorusGeometry(size[0] ?? 0.1, size[1] ?? 0.02, 8, 16);
+      return new THREE.TorusGeometry(size[0] ?? 0.1, size[1] ?? 0.02, 6, segments ?? 16);
+    case "loft":
+      return loftGeometry(part.shape.sections ?? [], segments ?? 16);
     default:
       return null;
   }

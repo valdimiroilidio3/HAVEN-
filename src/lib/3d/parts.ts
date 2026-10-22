@@ -1,4 +1,5 @@
 import { PLOT } from "./site";
+import { carParts } from "./car";
 import type { GarageSpec, PoolSpec, Rect } from "./site";
 
 /**
@@ -57,14 +58,46 @@ export type PartGroup =
   /** Luminaires: bollards and lanterns. */
   | "light";
 
+/**
+ * One cross-section of a loft, expressed in the part's local space.
+ *
+ * A loft is how a car body is actually shaped: a stack of sections swept along
+ * +Z. Boxes cannot produce a nose that drops, a shoulder that swells over the
+ * rear wheel and a tail that narrows — and a car assembled from boxes reads as a
+ * van, which is exactly what the plots had.
+ */
+export interface LoftSection {
+  /** Position along the part's local +Z, in metres. */
+  z: number;
+  /** Half width in X at the section's widest point (its shoulder). */
+  halfWidth: number;
+  /**
+   * Half width at the very top of the section. Cars taper inward toward the
+   * roof (tumblehome); without this a greenhouse lofts into a dome.
+   */
+  topHalfWidth?: number;
+  /** Bottom and top of the section in local Y. */
+  bottom: number;
+  top: number;
+  /**
+   * Superellipse exponent: 2 is elliptical, 4 is nearly rectangular.
+   * Car bodies sit around 3: rounded rectangles, flat sides, soft shoulders.
+   */
+  squareness?: number;
+}
+
 export interface PartShape {
-  kind: "box" | "cylinder" | "icosahedron" | "torus";
-  /** box: [w,h,d] · cylinder: [rTop,rBottom,h] · icosahedron: [r] · torus: [r,tube] */
+  kind: "box" | "cylinder" | "icosahedron" | "torus" | "loft";
+  /** box: [w,h,d] · cylinder: [rTop,rBottom,h] · icosahedron: [r] · torus: [r,tube] · loft: ignored */
   size: number[];
   /** Centre of the primitive in plot-local space (metres, +Y up). */
   position: [number, number, number];
   rotation?: [number, number, number];
   scale?: [number, number, number];
+  /** loft only: sections ordered by increasing z. Must be symmetric about the part origin. */
+  sections?: LoftSection[];
+  /** Ring resolution for cylinders, toruses and lofts. Rounded shapes stay smooth up close. */
+  segments?: number;
 }
 
 export interface Part {
@@ -93,6 +126,15 @@ function shapeExtents(shape: PartShape): [number, number, number] {
       return [(s[0] ?? 0) * 2, (s[0] ?? 0) * 2, (s[0] ?? 0) * 2];
     case "torus":
       return [(s[0] ?? 0) * 2 + (s[1] ?? 0) * 2, (s[1] ?? 0) * 2, (s[0] ?? 0) * 2 + (s[1] ?? 0) * 2];
+    case "loft": {
+      const sections = shape.sections ?? [];
+      if (sections.length === 0) return [0, 0, 0];
+      const halfWidth = Math.max(...sections.map((section) => section.halfWidth));
+      const bottom = Math.min(...sections.map((section) => section.bottom));
+      const top = Math.max(...sections.map((section) => section.top));
+      const z = sections.map((section) => section.z);
+      return [halfWidth * 2, top - bottom, Math.max(...z) - Math.min(...z)];
+    }
   }
 }
 
@@ -201,69 +243,6 @@ function wallParts(code: string, walls: Array<{ x: number; z: number; width: num
   });
 }
 
-const CAR_SPEC = {
-  length: 3.95,
-  width: 1.76,
-  bodyHeight: 0.36,
-  bodyY: 0.46,
-  cabinHeight: 0.44,
-  cabinY: 1.02,
-  wheelRadius: 0.33,
-  wheelWidth: 0.22,
-  bayOffset: 1.45,
-};
-
-function carParts(code: string, index: number, x: number, paint: PartMaterial): Part[] {
-  const prefix = `${code}/car-${index}`;
-  const s = CAR_SPEC;
-  const parts: Part[] = [
-    {
-      id: `${prefix}/body`,
-      group: "car",
-      material: paint,
-      shape: { kind: "box", size: [s.width, s.bodyHeight, s.length], position: [x, s.bodyY, 0] },
-    },
-    {
-      id: `${prefix}/shoulder`,
-      group: "car",
-      material: paint,
-      shape: { kind: "box", size: [s.width - 0.06, 0.34, s.length - 0.5], position: [x, 0.74, -0.06] },
-    },
-    {
-      id: `${prefix}/cabin`,
-      group: "car",
-      material: "carGlass",
-      shape: { kind: "box", size: [1.58, s.cabinHeight, 2.15], position: [x, s.cabinY, -0.2] },
-    },
-    {
-      id: `${prefix}/roof`,
-      group: "car",
-      material: paint,
-      shape: { kind: "box", size: [1.5, 0.1, 1.95], position: [x, 1.24, -0.2] },
-    },
-    ...[-1, 1].flatMap((side) =>
-      [-1, 1].map<Part>((end) => ({
-        id: `${prefix}/wheel-${side}-${end}`,
-        group: "car",
-        material: "charcoal",
-        shape: {
-          kind: "cylinder",
-          size: [s.wheelRadius, s.wheelRadius, s.wheelWidth],
-          position: [x + side * 0.8, s.wheelRadius, end * 1.3],
-          rotation: [0, 0, Math.PI / 2],
-        },
-      })),
-    ),
-    ...[-1, 1].map<Part>((side) => ({
-      id: `${prefix}/headlight-${side}`,
-      group: "car",
-      material: "white",
-      shape: { kind: "box", size: [0.46, 0.12, 0.06], position: [x + side * 0.56, 0.7, s.length / 2 + 0.02] },
-    })),
-  ];
-  return parts;
-}
-
 function carportParts(code: string, spec: GarageSpec, seed: number, lowQuality: boolean): Part[] {
   const height = 3.05;
   const roof = spec.depth + 0.4;
@@ -349,19 +328,26 @@ function carportParts(code: string, spec: GarageSpec, seed: number, lowQuality: 
     });
   }
 
-  const carScale = Math.min(1, (spec.depth - 0.35) / 4.2);
+  // A family home parks a four-door; the smaller typologies a coupé. The car is
+  // shrunk uniformly (not just in Z) when the bay is shallower than the body, so
+  // the wheels stay round.
+  const style = spec.bays === 2 ? "suv" : "coupe";
+  const nominal = style === "suv" ? 4.8 : 4.55;
+  const fit = Math.min(1, (spec.depth - 0.4) / nominal);
+  const bayOffset = 1.45;
   const paints: PartMaterial[] = ["carPaint0", "carPaint1", "carPaint2"];
-  const bayXs = spec.bays === 2 ? [-CAR_SPEC.bayOffset, CAR_SPEC.bayOffset] : [0];
+  const bayXs = spec.bays === 2 ? [-bayOffset, bayOffset] : [0];
   bayXs.forEach((offset, index) => {
     const paint = paints[(seed + index) % paints.length] ?? "carPaint0";
-    parts.push(...carParts(code, index, spec.x + offset, paint).map((part) => ({
-      ...part,
-      shape: {
-        ...part.shape,
-        position: [part.shape.position[0], part.shape.position[1], spec.z + part.shape.position[2] * carScale] as [number, number, number],
-        scale: [1, 1, carScale] as [number, number, number],
-      },
-    })));
+    parts.push(
+      ...carParts(code, index, spec.x + offset, paint, style, fit, lowQuality).map((part) => ({
+        ...part,
+        shape: {
+          ...part.shape,
+          position: [part.shape.position[0], part.shape.position[1], spec.z + part.shape.position[2]] as [number, number, number],
+        },
+      })),
+    );
   });
 
   return parts;
@@ -639,6 +625,15 @@ export function partTriangleBudget(parts: Part[]): number {
       case "torus":
         total += 160;
         break;
+      case "loft": {
+        // Computed, not estimated: a loft's cost is (sections − 1) rings of quads
+        // plus two caps. Leaving it out of this switch made the cars' bodies cost
+        // nothing in the audit, which under-reported the scene.
+        const sections = part.shape.sections?.length ?? 0;
+        const segments = part.shape.segments ?? 16;
+        total += Math.max(0, sections - 1) * segments * 2 + segments * 2;
+        break;
+      }
     }
   }
   return total;
