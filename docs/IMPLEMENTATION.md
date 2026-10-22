@@ -205,3 +205,21 @@ No paid service is required for the local configuration; Supabase is optional.
 3. Upload a representative GLB and confirm scale/orientation against a known footprint.
 4. Add transactional email for enquiries and viewing confirmations.
 5. Move rate limiting to a shared store if the app runs on more than one instance.
+
+## Local workflow traps
+
+Two failures that look like code bugs but are not:
+
+1. **`npm run build` while `npm run dev` is running.** Both write `.next/`. The
+   build replaces the dev server's chunks underneath it, and requests start
+   failing with `MODULE_NOT_FOUND: Cannot find module './NNNN.js'` (a 500 on an
+   otherwise healthy page). Stop the dev server, or delete `.next` and restart it
+   after a build. To verify a production build, do it in a separate step and
+   restart the dev server afterwards.
+
+2. **Scripts that import a file they generate.** `scripts/render-elevations.ts`
+   and `scripts/measure-houses.ts` need the *previous* builder to compare
+   before/after, so they write it to `scripts/.cache/` and import it by a URL
+   computed at run time (`webpackIgnore`). Never give the bundler a literal path
+   to a file that only exists during the run: it resolves it statically, and once
+   the file is deleted the whole dev build fails with `ENOENT`.
