@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
-import { carParts, type CarStyle } from "@/lib/3d/car";
+import { CAR_MODELS, carParts, carSpec, type CarModel } from "@/lib/3d/car";
 import { partBounds, partTriangleBudget, type Part } from "@/lib/3d/parts";
 import { loftGeometry } from "@/components/three/site/loft-geometry";
 import { mergePartsByMaterial } from "@/components/three/site/plot-geometry";
@@ -24,11 +24,18 @@ import { mergePartsByMaterial } from "@/components/three/site/plot-geometry";
  * here instead.
  */
 
-const STYLES: CarStyle[] = ["coupe", "suv"];
+const STYLES: CarModel[] = CAR_MODELS;
 
-function car(style: CarStyle, fit = 1, lowQuality = false): Part[] {
+function car(style: CarModel, fit = 1, lowQuality = false): Part[] {
   return carParts("TST", 0, 0, "carPaint0", style, fit, lowQuality);
 }
+
+/** Published manufacturer figures, in metres. */
+const PUBLISHED: Record<CarModel, { length: number; width: number; height: number; wheelbase: number }> = {
+  roma: { length: 4.656, width: 1.974, height: 1.301, wheelbase: 2.67 },
+  "12cilindri": { length: 4.733, width: 2.0, height: 1.292, wheelbase: 2.7 },
+  purosangue: { length: 4.973, width: 2.028, height: 1.589, wheelbase: 3.018 },
+};
 
 function bounds(part: Part) {
   return partBounds(part, { x: 0, z: 0 }, 0);
@@ -128,10 +135,14 @@ describe("parked cars", () => {
     }
     // Four wheels, each with a tyre.
     expect(ids.filter((id) => id.endsWith("/tyre"))).toHaveLength(4);
-    // Front and rear signatures.
-    for (const suffix of ["grille", "splitter", "lamp-drl", "lightbar-drl", "plate"]) {
+    // Every car has a splitter, a daytime strip at each end and a plate. The
+    // main front graphic differs by model: grille for the Roma, visor for the
+    // 12Cilindri, intake for the Purosangue.
+    for (const suffix of ["splitter", "lamp-drl", "lightbar-drl", "plate"]) {
       expect(ids).toContain(`TST/car-0/${suffix}`);
     }
+    const front = style === "roma" ? "grille" : style === "12cilindri" ? "visor" : "intake";
+    expect(ids).toContain(`TST/car-0/${front}`);
   });
 
   it.each(STYLES)("%s never reaches below grade", (style) => {
@@ -177,9 +188,12 @@ describe("parked cars", () => {
       const box = bounds(part);
       // Mirrors legitimately stick out past the body on a real car; everything
       // else has to stay inside the 1.90 m body.
-      const allowance = part.id.includes("/mirror") ? 2.12 : 1.95;
+      // The body is exactly the published width; mirrors are allowed to stick
+      // out past it, as they do on the real car (and are excluded from the
+      // published "width without mirrors" figure).
+      const allowance = part.id.includes("/mirror") ? PUBLISHED[style].width + 0.16 : PUBLISHED[style].width + 0.02;
       expect(box.maxX - box.minX, part.id).toBeLessThan(allowance);
-      expect(box.maxZ - box.minZ, part.id).toBeLessThan(4.9);
+      expect(box.maxZ - box.minZ, part.id).toBeLessThan(PUBLISHED[style].length + 0.02);
       expect(box.minZ, part.id).toBeGreaterThan(-2.5);
       expect(box.maxZ, part.id).toBeGreaterThan(-2.5);
     }
@@ -190,19 +204,22 @@ describe("parked cars", () => {
       },
       { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity },
     );
-    // 1.86 m body + a mirror on each side ≈ 2.05 m. The single bay is 3.6 m and
-    // the double bay puts the two cars 2.9 m apart, which leaves 0.85 m between
-    // their mirrors.
-    expect(whole.maxX - whole.minX).toBeLessThan(2.12);
-    expect(whole.maxZ - whole.minZ).toBeLessThan(4.95);
+    // Published width plus a mirror on each side. The single bay is 3.6 m, and
+    // the double bay puts the two cars 2.9 m apart.
+    expect(whole.maxX - whole.minX).toBeLessThan(PUBLISHED[style].width + 0.18);
+    // Longest car (Purosangue, 4.973 m) against the deepest usable bay
+    // (5.6 m less the 0.35 m the carport keeps clear) and the 2.9 m between the
+    // two cars of a double bay.
+    expect(whole.maxZ - whole.minZ).toBeLessThan(5.25);
+    expect(whole.maxZ - whole.minZ).toBeGreaterThan(2.9);
     // Symmetric about the bay centre: a car parked off-axis hits a post.
     expect(Math.abs(whole.minX + whole.maxX) / 2).toBeLessThan(0.02);
     expect(Math.abs(whole.minZ + whole.maxZ) / 2).toBeLessThan(0.03);
   });
 
   it("falls back to a smaller car instead of a squashed one", () => {
-    const full = car("suv");
-    const tight = car("suv", 0.82);
+    const full = car("purosangue");
+    const tight = car("purosangue", 0.82);
     const width = (parts: Part[]) => {
       const body = parts.find((part) => part.id.endsWith("/body"))!;
       const box = bounds(body);
@@ -222,7 +239,7 @@ describe("parked cars", () => {
   });
 
   it("keeps every wheel round under a tight bay", () => {
-    for (const part of car("coupe", 0.8).filter((entry) => entry.id.endsWith("/tyre"))) {
+    for (const part of car("roma", 0.8).filter((entry) => entry.id.endsWith("/tyre"))) {
       const box = bounds(part);
       // The tyre is a cylinder on the X axis: its disc must stay circular in YZ.
       expect(box.maxY - box.minY).toBeCloseTo(box.maxZ - box.minZ, 2);
@@ -263,10 +280,78 @@ describe("parked cars", () => {
     }
   });
 
+  it.each(STYLES)("%s carries its published dimensions", (model) => {
+    // The build must reproduce the manufacturer's figures, not approximate them:
+    // the whole point of modelling real cars is that the numbers are checkable.
+    const spec = carSpec(model);
+    const published = PUBLISHED[model];
+    expect(spec.length).toBeCloseTo(published.length, 3);
+    expect(spec.width).toBeCloseTo(published.width, 3);
+    expect(spec.height).toBeCloseTo(published.height, 3);
+    expect(spec.wheelbase).toBeCloseTo(published.wheelbase, 3);
+  });
+
+  it.each(STYLES)("%s draws itself at those dimensions", (model) => {
+    const published = PUBLISHED[model];
+    const parts = car(model);
+    const whole = parts
+      .filter((part) => !part.id.includes("/mirror"))
+      .reduce(
+        (acc, part) => {
+          const box = bounds(part);
+          return {
+            minX: Math.min(acc.minX, box.minX),
+            maxX: Math.max(acc.maxX, box.maxX),
+            minY: Math.min(acc.minY, box.minY),
+            maxY: Math.max(acc.maxY, box.maxY),
+            minZ: Math.min(acc.minZ, box.minZ),
+            maxZ: Math.max(acc.maxZ, box.maxZ),
+          };
+        },
+        { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, minZ: Infinity, maxZ: -Infinity },
+      );
+    // Body ±2 cm on each axis against the published figure. A car that is 10%
+    // too long is not the car.
+    expect(whole.maxZ - whole.minZ, "length").toBeCloseTo(published.length, 1);
+    expect((whole.maxX - whole.minX) * 1.0, "width").toBeGreaterThan(published.width - 0.06);
+    expect((whole.maxX - whole.minX) * 1.0, "width").toBeLessThan(published.width + 0.06);
+    expect(whole.maxY, "height").toBeGreaterThan(published.height - 0.03);
+    expect(whole.maxY, "height").toBeLessThan(published.height + 0.03);
+    expect(whole.minY, "sits on the ground").toBeCloseTo(0, 2);
+  });
+
+  it.each(STYLES)("%s places its wheels at the published wheelbase", (model) => {
+    const spec = carSpec(model);
+    const centre = (suffix: string) => {
+      const part = car(model).find((entry) => entry.id.endsWith(suffix))!;
+      return part.shape.position[2];
+    };
+    expect(centre("/wheel-l-f/tyre") - centre("/wheel-l-r/tyre")).toBeCloseTo(spec.wheelbase, 2);
+  });
+
+  it("gives each model its own front graphic", () => {
+    const ids = (model: CarModel) => car(model).map((part) => part.id);
+    // Roma: a vertical-bladed grille. 12Cilindri: a full-width gloss visor.
+    // Purosangue: corner blades and a tall intake.
+    expect(ids("roma").some((id) => id.includes("/grille-blade-"))).toBe(true);
+    expect(ids("12cilindri")).toContain("TST/car-0/visor");
+    expect(ids("purosangue").some((id) => id.includes("/corner-blade-"))).toBe(true);
+    // And none of them borrows another's signature.
+    expect(ids("roma")).not.toContain("TST/car-0/visor");
+    expect(ids("purosangue")).not.toContain("TST/car-0/visor");
+  });
+
+  it("clads only the high-ride model's arches", () => {
+    const clad = (model: CarModel) => car(model).some((part) => part.id.includes("/arch-cladding"));
+    expect(clad("purosangue")).toBe(true);
+    expect(clad("roma")).toBe(false);
+    expect(clad("12cilindri")).toBe(false);
+  });
+
   it("counts its lofts in the triangle budget", () => {
     // The audit skipped the loft case entirely at first, so the cars' bodies cost
     // nothing in the reported budget. A vehicle must never be free.
-    const budget = partTriangleBudget(car("suv"));
+    const budget = partTriangleBudget(car("purosangue"));
     expect(budget).toBeGreaterThan(1500);
   });
 

@@ -820,3 +820,92 @@ triângulos do loft.
 - **Sem interiores, sem aberturas, sem faróis acesos.** Os vidros são opacos por
   desenho, para não se ver o vazio.
 - **Não visto em WebGL.** Como no resto desta ronda.
+
+## 18. Carros reais nos alpendres
+
+### 18.1 Três modelos com cotas de fabricante
+
+Os props genéricos foram substituídos por três automóveis que existem, modelados
+a partir das **dimensões publicadas**. Não são importações: são geometria
+procedural gerada pelo construtor do projecto.
+
+| Modelo | Comprimento | Largura | Altura | Entre-eixos | Pneus |
+| --- | --- | --- | --- | --- | --- |
+| Ferrari Roma (2020) | 4,656 m | 1,974 m | 1,301 m | 2,670 m | 245/35 R20 · 285/35 R20 |
+| Ferrari 12Cilindri (2024) | 4,733 m | 2,000 m | 1,292 m | 2,700 m | 275/35 R21 · 315/35 R21 |
+| Ferrari Purosangue (2022) | 4,973 m | 2,028 m | 1,589 m | 3,018 m | 255/35 R22 · 315/30 R23 |
+
+Os raios de roda são **calculados** a partir da medida do pneu (`aro × 25,4 +
+2 × flanco`), não estimados: R20 → 0,340 m, R21 → 0,363 m, R22 → 0,369 m, R23 →
+0,387 m. O Purosangue usa roda maior atrás, como o carro real.
+
+### 18.2 O que distingue cada um
+
+Não é a silhueta genérica com um autocolante: é a assinatura formal.
+
+- **Roma** — nariz de tubarão com grelha larga de lâminas verticais na cor da
+  carroçaria, faróis rasos sob o bordo do capô, fastback sem asa. Costas suaves.
+- **12Cilindri** — viseira preta a toda a largura com os faróis dentro dela, lâmina
+  DRL inferior, capô longo e baixo. É o carro mais baixo dos três (1,292 m) e o
+  mais largo.
+- **Purosangue** — cintura alta (1,13 m), cavas com aplicação de plástico preto,
+  embaladeira preta, traseira **vertical** com queda abrupta do tejadilho e
+  spoiler de tejadilho dividido. É o único com quatro portas.
+
+A traseira do Purosangue foi corrigida a meio: a primeira versão caía em fastback
+e lia-se como um coupé alto. Um quatro-portas não fecha em fastback.
+
+### 18.3 Onde cada um estaciona
+
+Alpendre simples (T1/T2): um Roma. Alpendre duplo (T3/T4): um Purosangue e um
+12Cilindri. Encaixe uniforme quando a baía é mais curta do que o carro, para as
+rodas continuarem redondas.
+
+### 18.4 Defeito antigo encontrado por estes testes
+
+`shapeExtents` calculava a caixa do `torus` com a espessura do tubo no eixo Y:
+dava 1,55 m de largura a uma cava de roda de 0,9 m (2 × (r + tubo) = 2 × 0,9 =
+1,8 m reais, mas distribuídos por eixos errados). O validador andava a medir uma
+forma que o renderer não desenhava. Corrigido: o disco tem 2(r+T) em X e Y, e
+só 2T em Z.
+
+### 18.5 Custo medido
+
+```
+roma        58 peças · 1 928 triângulos
+12cilindri  55 peças · 1 892 triângulos
+purosangue  65 peças · 2 660 triângulos
+
+plots 213 draw calls (16.4/plot) · 49 608 triângulos (pior quarteirão 5 148)
+antes dos carros reais:                     46 208 triângulos
+primitivas de cinco caixas:                 15 568 triângulos
+```
+
+O `audit:3d` passou a reportar **o pior quarteirão** e não só o total — uma média
+esconde uma regressão localizada. Há teste a fixar o tecto em 6 000 triângulos
+por quarteirão.
+
+### 18.6 Verificação
+
+| Gate | Resultado |
+| --- | --- |
+| `tsc --noEmit` | limpo |
+| `npx vitest run` | **271/271** (17 ficheiros; 35 em `tests/car-geometry.test.ts`) |
+| `npm run audit:3d` | 0 critical / 0 high / 1 medium (H13) / 0 low |
+| `npm run lint` | limpo |
+| servidor | `/`, `/properties`, `/login` a 200 |
+
+Os testes novos prendem as cotas: cada modelo tem de reproduzir comprimento,
+largura, altura e entre-eixos publicados; as rodas têm de estar à distância do
+entre-eixos; cada carro tem de ter a sua assinatura frontal e **não** a dos
+outros; só o Purosangue leva aplicação nas cavas; e o carro mais comprido tem de
+caber na baía mais funda.
+
+### 18.7 Limites honestos
+
+- **Marcas, letras e matrículas não são reproduzidas.** A esta escala seriam
+  detalhe inventado. O que identifica o carro é a forma.
+- **Sem interiores, sem aberturas, vidros opacos.**
+- **Sem verificação em WebGL.** As imagens vêm de um rasterizador CPU sobre a
+  geometria real; o resultado no browser não foi visto. O que os testes provam é
+  a geometria — dimensões, assentamento, simetria, assinatura.

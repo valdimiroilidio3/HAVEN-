@@ -194,10 +194,13 @@ export function getMaterials(): HavenMaterials {
       opacity: 0.94,
       envMapIntensity: 1.45,
     }),
+    // The three colours the cars are painted in: Ferrari's Rosso Corsa, Grigio
+    // Titanio and Blu Tour de France. Three materials, not ten — each extra paint
+    // is another draw call on every plot.
     carPaint: [
-      standard({ color: new THREE.Color("#ecebe6"), roughness: 0.26, metalness: 0.42, envMapIntensity: 1.3 }),
-      standard({ color: new THREE.Color("#2b3034"), roughness: 0.24, metalness: 0.5, envMapIntensity: 1.35 }),
-      standard({ color: new THREE.Color("#1f3448"), roughness: 0.26, metalness: 0.45, envMapIntensity: 1.3 }),
+      standard({ color: new THREE.Color("#8f1216"), roughness: 0.22, metalness: 0.45, envMapIntensity: 1.45 }),
+      standard({ color: new THREE.Color("#8d9094"), roughness: 0.24, metalness: 0.52, envMapIntensity: 1.4 }),
+      standard({ color: new THREE.Color("#1d3050"), roughness: 0.24, metalness: 0.48, envMapIntensity: 1.4 }),
     ],
     carGlass: standard({
       color: new THREE.Color("#0e1418"),

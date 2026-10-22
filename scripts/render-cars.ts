@@ -16,7 +16,7 @@ import path from "node:path";
 import * as THREE from "three";
 import { mergePartsByMaterial } from "../src/components/three/site/plot-geometry";
 import type { Part, PartMaterial } from "../src/lib/3d/parts";
-import { carParts, type CarStyle } from "../src/lib/3d/car";
+import { CAR_MODELS, carParts, carSpec, type CarModel } from "../src/lib/3d/car";
 
 type Vec = THREE.Vector3;
 
@@ -27,9 +27,9 @@ interface Cam {
 }
 
 const COLORS: Record<string, [number, number, number, number]> = {
-  carPaint0: [0xe8, 0xe7, 0xe1, 1],
-  carPaint1: [0x33, 0x38, 0x3c, 1],
-  carPaint2: [0x24, 0x3a, 0x4e, 1],
+  carPaint0: [0x8f, 0x12, 0x16, 1],
+  carPaint1: [0x8d, 0x90, 0x94, 1],
+  carPaint2: [0x1d, 0x30, 0x50, 1],
   carGlass: [0x14, 0x1c, 0x21, 1],
   charcoal: [0x22, 0x24, 0x22, 1],
   metal: [0x9a, 0x9e, 0xa2, 1],
@@ -174,9 +174,11 @@ function renderCell(parts: Part[], cam: Cam, width: number, height: number): Uin
       const screen = square.map((p) => [p!.x, p!.y] as [number, number]);
       // Depth-test the ground per pixel would need a z-buffer; draw it first and
       // let the car paint over it. Two triangles, flat colour, contact shadow.
-      const shadow = shade("charcoal", new THREE.Vector3(0, 1, 0));
-      rasterise(buf, width, height, [screen[0]!, screen[1]!, screen[2]!], [shadow, shadow, shadow].map((c) => [c[0] + 150, c[1] + 150, c[2] + 150, 1]) as Array<[number, number, number, number]>);
-      rasterise(buf, width, height, [screen[0]!, screen[2]!, screen[3]!], [shadow, shadow, shadow].map((c) => [c[0] + 150, c[1] + 150, c[2] + 150, 1]) as Array<[number, number, number, number]>);
+      // A soft studio floor, a shade darker than the backdrop so the wheels and
+      // the underside read as contact rather than as floating.
+      const floor: [number, number, number, number] = [0xd8, 0xd6, 0xd0, 1];
+      rasterise(buf, width, height, [screen[0]!, screen[1]!, screen[2]!], [floor, floor, floor]);
+      rasterise(buf, width, height, [screen[0]!, screen[2]!, screen[3]!], [floor, floor, floor]);
     }
   }
 
@@ -254,13 +256,30 @@ function compose(target: { w: number; h: number; buf: Uint8Array }, cells: Array
   }
 }
 
+/**
+ * The revision whose `parts.ts` still described the cars inline.
+ *
+ * After the loft rework, `parts.ts` imports `car.ts`, so importing an old
+ * `parts.ts` would silently pull in the *new* cars. Walk back from the given
+ * revision until we find one that does not import the car module.
+ */
 function beforeRevision(explicit?: string): string {
-  if (explicit && /^[\w.~^-]+$/.test(explicit)) return explicit;
-  return process.env.HAVEN_BEFORE_REV ?? "HEAD~1";
+  const start = explicit && /^[\w.~^-]+$/.test(explicit) ? explicit : (process.env.HAVEN_BEFORE_REV ?? "HEAD");
+  let revision = start;
+  for (let step = 0; step < 6; step += 1) {
+    try {
+      const source = execSync(`git show ${revision}:src/lib/3d/parts.ts`, { encoding: "utf8" });
+      if (!source.includes('from "./car"')) return revision;
+    } catch {
+      return start;
+    }
+    revision = `${revision}~1`;
+  }
+  return start;
 }
 
 /** The previous cars, from git: `carParts` lived inside parts.ts. */
-async function beforeParts(): Promise<Record<CarStyle, Part[]> | null> {
+async function beforeParts(): Promise<Record<CarModel, Part[]> | null> {
   try {
     const dir = path.join("src", "lib", "3d");
     mkdirSync(dir, { recursive: true });
@@ -270,19 +289,26 @@ async function beforeParts(): Promise<Record<CarStyle, Part[]> | null> {
     const mod = (await import(/* webpackIgnore: true */ modulePath)) as unknown as {
       plotParts: (input: unknown) => Part[];
     };
-    const out = {} as Record<CarStyle, Part[]>;
-    for (const [style, depth, bays] of [["coupe", 5.0, 1], ["suv", 5.6, 2]] as const) {
-      const parts = mod.plotParts({
-        code: "CMP",
-        rearDepth: 18,
-        walls: [],
-        garage: { width: bays === 2 ? 5.2 : 3.6, depth, x: 0, z: depth / 2, bays, walled: bays === 2 },
-        pool: null,
-        seed: 1,
-        lowQuality: false,
-      });
-      out[style] = centreParts(parts.filter((part) => part.group === "car"));
-    }
+    const out = {} as Record<CarModel, Part[]>;
+    // The old props were one body shape; the single bay carried one, the double
+    // bay two. Map them onto the new models by bay type.
+    const build = (depth: number, bays: 1 | 2) =>
+      centreParts(
+        mod
+          .plotParts({
+            code: "CMP",
+            rearDepth: 18,
+            walls: [],
+            garage: { width: bays === 2 ? 5.2 : 3.6, depth, x: 0, z: depth / 2, bays, walled: bays === 2 },
+            pool: null,
+            seed: 1,
+            lowQuality: false,
+          })
+          .filter((part) => part.group === "car"),
+      );
+    out.roma = build(5.0, 1);
+    out.purosangue = build(5.6, 2);
+    out["12cilindri"] = build(5.6, 2);
     rmSync(file, { force: true });
     return out;
   } catch (error) {
@@ -310,11 +336,16 @@ function centreParts(parts: Part[]): Part[] {
   }));
 }
 
-const VIEWS: Array<{ name: string; cam: Cam }> = [
-  { name: "front 3/4", cam: { eye: new THREE.Vector3(6.2, 2.0, 6.4), target: new THREE.Vector3(0, 0.7, 0.2), fov: 30 } },
-  { name: "side", cam: { eye: new THREE.Vector3(10.5, 1.1, 0.05), target: new THREE.Vector3(0, 0.7, 0), fov: 26 } },
-  { name: "rear 3/4", cam: { eye: new THREE.Vector3(-6.0, 1.9, -6.2), target: new THREE.Vector3(0, 0.7, -0.2), fov: 30 } },
-];
+/** Cameras scaled to the car, so a 4.97 m Purosangue and a 4.66 m Roma both fit. */
+function viewsFor(length: number): Array<{ name: string; cam: Cam }> {
+  const r = length / 4.66;
+  const c = (x: number, y: number, z: number) => new THREE.Vector3(x * r, y, z * r);
+  return [
+    { name: "front 3/4", cam: { eye: c(5.4, 1.75, 5.6), target: new THREE.Vector3(0, 0.72, 0.15), fov: 32 } },
+    { name: "side", cam: { eye: c(9.2, 1.05, 0.02), target: new THREE.Vector3(0, 0.72, 0), fov: 27 } },
+    { name: "rear 3/4", cam: { eye: c(-5.2, 1.7, -5.4), target: new THREE.Vector3(0, 0.72, -0.15), fov: 32 } },
+  ];
+}
 
 const CELL_W = 640;
 const CELL_H = 470;
@@ -323,11 +354,11 @@ async function main() {
   const out = process.argv[2] ?? "docs/cars-before-after.png";
   const before = await beforeParts();
 
-  const styles: CarStyle[] = ["coupe", "suv"];
-  const rows: Array<{ style: CarStyle; before: Part[] | null; after: Part[] }> = styles.map((style) => ({
+  const styles: CarModel[] = CAR_MODELS;
+  const rows: Array<{ style: CarModel; before: Part[] | null; after: Part[] }> = styles.map((style) => ({
     style,
     before: before?.[style] ?? null,
-    after: carParts("CMP", 0, 0, "carPaint0", style, 1, false),
+    after: carParts("CMP", 0, 0, PAINT[style], style, 1, false),
   }));
 
   const w = CELL_W * 2;
@@ -336,7 +367,7 @@ async function main() {
 
   const cells: Array<{ w: number; h: number; buf: Uint8Array; x: number; y: number }> = [];
   rows.forEach((row, index) => {
-    const cam = VIEWS[0]!.cam;
+    const cam = viewsFor(carSpec(row.style).length)[0]!.cam;
     if (row.before) cells.push({ ...dim(renderCell(row.before, cam, CELL_W, CELL_H)), x: 0, y: index * CELL_H });
     cells.push({ ...dim(renderCell(row.after, cam, CELL_W, CELL_H)), x: CELL_W, y: index * CELL_H });
   });
@@ -344,21 +375,29 @@ async function main() {
   writePng(out, w, h, target.buf);
   console.log(`wrote ${resolve(out)} ${w} x ${h} (before | after)`);
 
-  // Detail sheet: the new car from three angles.
-  const dw = CELL_W * VIEWS.length;
-  const detail = { w: dw, h: CELL_H * 2, buf: new Uint8Array(dw * CELL_H * 2 * 3).fill(0xf2) };
+  // Detail sheet: every model from three angles.
+  const dw = CELL_W * 3;
+  const dh = CELL_H * styles.length;
+  const detail = { w: dw, h: dh, buf: new Uint8Array(dw * dh * 3).fill(0xf2) };
   const detailCells = styles.flatMap((style, index) =>
-    VIEWS.map((view, column) => ({
-      ...dim(renderCell(carParts("CMP", 0, 0, "carPaint0", style, 1, false), view.cam, CELL_W, CELL_H)),
+    viewsFor(carSpec(style).length).map((view, column) => ({
+      ...dim(renderCell(carParts("CMP", 0, 0, PAINT[style], style, 1, false), view.cam, CELL_W, CELL_H)),
       x: column * CELL_W,
       y: index * CELL_H,
     })),
   );
   compose(detail, detailCells);
   const detailPath = out.replace(/\.png$/, "-views.png");
-  writePng(detailPath, dw, CELL_H * 2, detail.buf);
-  console.log(`wrote ${resolve(detailPath)} ${dw} x ${CELL_H * 2} (front 3/4 | side | rear 3/4)`);
+  writePng(detailPath, dw, dh, detail.buf);
+  console.log(`wrote ${resolve(detailPath)} ${dw} x ${dh} (front 3/4 | side | rear 3/4)`);
 }
+
+/** The paint each model is rendered in, matching the plot's three colours. */
+const PAINT: Record<CarModel, PartMaterial> = {
+  roma: "carPaint0",
+  "12cilindri": "carPaint1",
+  purosangue: "carPaint2",
+};
 
 function dim(buf: Uint8Array): { w: number; h: number; buf: Uint8Array } {
   return { w: CELL_W, h: CELL_H, buf };

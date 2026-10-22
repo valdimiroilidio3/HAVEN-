@@ -405,6 +405,22 @@ describe("plot geometry — parts are placed by rule, not by eye", () => {
     expect(turned.maxX - turned.minX).toBeCloseTo(0.2, 5);
   });
 
+  it("keeps the heaviest plot inside its triangle budget", () => {
+    // Three real cars per double-bay plot is the expensive case. 6,000 triangles
+    // for a fully fitted plot (two cars, pool, deck, planting) is the ceiling;
+    // the previous props sat at 15.5k for the whole site, the current ones at
+    // ~50k, which is still an order of magnitude below the terrain.
+    const report = validateScene({
+      entries: SEED_UNITS.map((unit) => ({
+        property: { code: unit.code, typology: unit.typology },
+        position: unit.position,
+        rotationY: unit.position.rotationY,
+      })),
+    });
+    expect(report.checked.worstPlotTriangles).toBeLessThan(6000);
+    expect(report.checked.worstPlotTriangles).toBeGreaterThan(2000);
+  });
+
   it("merges into a handful of draw calls, not one per part", () => {
     const materials = new Set(parts.map((part) => part.material));
     expect(parts.length).toBeGreaterThan(20);

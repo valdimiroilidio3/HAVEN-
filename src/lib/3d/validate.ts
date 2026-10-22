@@ -112,6 +112,8 @@ export interface SceneReport {
     lagoonDrawCalls: number;
     /** Triangle budget of the plot parts, computed from primitive types. */
     plotTriangles: number;
+    /** The heaviest single plot, so a regression cannot hide in an average. */
+    worstPlotTriangles: number;
     /** Footpath polylines in the pedestrian network. */
     footpaths: number;
     /** Graph nodes in the pedestrian network. */
@@ -322,13 +324,16 @@ export function validateScene({
   let partCount = 0;
   let plotDrawCalls = 0;
   let plotTriangles = 0;
+  let worstPlotTriangles = 0;
 
   for (const plot of plots) {
     const { entry, garage, pool, parts, interior } = plot;
     const code = entry.property.code;
     partCount += parts.length;
     plotDrawCalls += new Set(parts.map((part) => part.material)).size;
-    plotTriangles += partTriangleBudget(parts);
+    const plotBudget = partTriangleBudget(parts);
+    plotTriangles += plotBudget;
+    worstPlotTriangles = Math.max(worstPlotTriangles, plotBudget);
     if (pool) poolCount += 1;
     if (garage) carportCount += 1;
 
@@ -1039,6 +1044,7 @@ export function validateScene({
       flowers: flowerCount,
       plotDrawCalls,
       plotTriangles,
+      worstPlotTriangles,
       lagoonParts: lagoonPartsChecked,
       lagoonDrawCalls: new Set(lagoon.parts.map((part) => part.material)).size,
       footpaths: walk.paths.length,
@@ -1054,7 +1060,7 @@ export function formatReport(report: SceneReport): string {
     `scene: ${report.checked.houses} houses · ${report.checked.plots} plots · ${report.checked.pools} pools · ${report.checked.carports} carports · ${report.checked.parts} parts`,
     `findings: ${report.counts.critical} critical, ${report.counts.high} high, ${report.counts.medium} medium, ${report.counts.low} low`,
     `lagoon: ${report.checked.lagoonParts} parts → ${report.checked.lagoonDrawCalls} draw calls`,
-    `budget: plots ${report.checked.plotDrawCalls} draw calls (${(report.checked.plotDrawCalls / Math.max(1, report.checked.plots)).toFixed(1)}/plot) · ${report.checked.plotTriangles.toLocaleString("en-US")} triangles · ${report.checked.trees} trees · ${report.checked.flowers} flowers`,
+    `budget: plots ${report.checked.plotDrawCalls} draw calls (${(report.checked.plotDrawCalls / Math.max(1, report.checked.plots)).toFixed(1)}/plot) · ${report.checked.plotTriangles.toLocaleString("en-US")} triangles (worst plot ${report.checked.worstPlotTriangles.toLocaleString("en-US")}) · ${report.checked.trees} trees · ${report.checked.flowers} flowers`,
   ];
   for (const finding of report.findings) {
     const where = finding.footprint

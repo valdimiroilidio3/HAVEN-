@@ -1,5 +1,5 @@
 import { PLOT } from "./site";
-import { carParts } from "./car";
+import { carParts, carSpec, type CarModel } from "./car";
 import type { GarageSpec, PoolSpec, Rect } from "./site";
 
 /**
@@ -125,7 +125,11 @@ function shapeExtents(shape: PartShape): [number, number, number] {
     case "icosahedron":
       return [(s[0] ?? 0) * 2, (s[0] ?? 0) * 2, (s[0] ?? 0) * 2];
     case "torus":
-      return [(s[0] ?? 0) * 2 + (s[1] ?? 0) * 2, (s[1] ?? 0) * 2, (s[0] ?? 0) * 2 + (s[1] ?? 0) * 2];
+      // A torus lies in XY with its tube along Z: the disc is 2(r + tube) across
+      // in X and Y, and only 2·tube thick in Z. The old version put the tube
+      // thickness on Y, which made a wheel arch claim 1.5 m of width and would
+      // have failed a car against its own carport.
+      return [(s[0] ?? 0) * 2 + (s[1] ?? 0) * 2, (s[0] ?? 0) * 2 + (s[1] ?? 0) * 2, (s[1] ?? 0) * 2];
     case "loft": {
       const sections = shape.sections ?? [];
       if (sections.length === 0) return [0, 0, 0];
@@ -328,19 +332,20 @@ function carportParts(code: string, spec: GarageSpec, seed: number, lowQuality: 
     });
   }
 
-  // A family home parks a four-door; the smaller typologies a coupé. The car is
-  // shrunk uniformly (not just in Z) when the bay is shallower than the body, so
-  // the wheels stay round.
-  const style = spec.bays === 2 ? "suv" : "coupe";
-  const nominal = style === "suv" ? 4.8 : 4.55;
-  const fit = Math.min(1, (spec.depth - 0.4) / nominal);
+  // Real cars, by name: the single bay takes a Roma; the double bay a Purosangue
+  // and a 12Cilindri. Each is shrunk uniformly (never in one axis) when its
+  // published length exceeds the bay, so wheels stay round and the proportions
+  // survive.
+  const models: CarModel[] = spec.bays === 2 ? ["purosangue", "12cilindri"] : ["roma"];
   const bayOffset = 1.45;
   const paints: PartMaterial[] = ["carPaint0", "carPaint1", "carPaint2"];
   const bayXs = spec.bays === 2 ? [-bayOffset, bayOffset] : [0];
   bayXs.forEach((offset, index) => {
+    const model = models[index] ?? "roma";
+    const fit = Math.min(1, (spec.depth - 0.35) / carSpec(model).length);
     const paint = paints[(seed + index) % paints.length] ?? "carPaint0";
     parts.push(
-      ...carParts(code, index, spec.x + offset, paint, style, fit, lowQuality).map((part) => ({
+      ...carParts(code, index, spec.x + offset, paint, model, fit, lowQuality).map((part) => ({
         ...part,
         shape: {
           ...part.shape,
