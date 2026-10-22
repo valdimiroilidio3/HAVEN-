@@ -414,3 +414,102 @@ reflector is gated behind full quality precisely so that a device that dislikes
 it can switch to performance mode without losing the feature. This is the one
 change in this round that genuinely needs a human eye before it is called
 finished.
+
+## 13. Pedestrian circulation
+
+The site had carriageways, driveways and kerbs but **no pedestrian network at
+all**: nothing was drawn between the gate and a front door, and nothing checked
+that one existed. A house could be unreachable and every gate would stay green.
+
+### 13.1 The network is derived, not drawn by hand
+
+`src/lib/3d/circulation.ts` builds the network from the same `SITE` numbers the
+roads use, so plan, renderer and validator cannot drift:
+
+| Element | Rule |
+| --- | --- |
+| `path/ring-outer` | Closed loop on the **outer** verge, `PATH.ringInset` outside `SITE.ring.outer` — the houses front the circuit from outside, so this is the spine that serves them |
+| `path/ring-inner` | Closed loop on the **inner** verge, `PATH.ringInset` inside `SITE.ring.inner`, around the central garden |
+| `path/crossing/{east,west}` | Marked crossings over the circuit at `z = 0`, joining spine and garden |
+| `path/crossing/north` | The arrival axis: the boulevard lands at `x = 0`, so the garden is entered straight ahead from the gate |
+| `path/boulevard/{east,west}` | Verge walks from the gate to the junction |
+| `path/lagoon`, `path/service`, `path/sports` | Deck loop, service-road verge, link to the sports park |
+| `path/spur/<code>` | Door → front garden → nearest spine point **on the façade side** |
+
+Three defects found and fixed while building it, each structural rather than a
+coordinate nudge:
+
+1. **The loop was four arcs.** `roundedLoop` emitted the corner arcs and never
+   the straight sides, so the "closed loop" was four disconnected quarter
+   circles and every crossing landed in the void between corners.
+2. **The ring did not close.** The last straight excluded its end sample, leaving
+   a ~2 m gap wider than the join radius `PATH.joinRadius`.
+3. **Junctions joined by luck.** A verge ending 1.5 m from the loop connected on
+   one side of the site and not the other, silently sending the east half the
+   long way round (273 m instead of 109 m). `snapEndpoints` now makes shared
+   endpoints coincide exactly, in a fixed order: rings first, then the paths that
+   meet them.
+
+A fourth correction is about honesty: `splitRoadCrossings` used to relabel **any**
+run over tarmac as a "crossing". A path that follows the carriageway was
+therefore invisible to the rule that forbids it. Now only a run shorter than
+`PATH.maxCrossing` becomes a crossing; a longer one keeps its authored kind and
+is reported.
+
+### 13.2 Rules
+
+| Rule | Severity |
+| --- | --- |
+| Every front door reachable on foot from the gate | **critical** |
+| No footpath inside a house footprint | **critical** |
+| Footpath clear of carriageways except at a marked crossing | high |
+| Public path never crosses a private plot | medium |
+| Width: ≥ 1.2 m walk, ≥ 2 m crossing | medium |
+| Spur shorter than 14 m, always on the façade side | test |
+
+A door only counts as served when a sampled path node is within
+`PATH.doorLink` (3.5 m); the graph refuses to connect a door to a path that is
+not actually there.
+
+### 13.3 Measured
+
+```
+paths 30 (ring 4 · crossing 8 · spur 13 · boulevard 2 · lagoon 1 · service 1 · sports 1)
+nodes 602 · edges 776 · 942 m of footpath
+unreachable 0/13 · worst walk gate → door 197.2 m (H03)
+H01 165 · H02 181 · H03 197 · H04 185 · H05 163 · H06 147 · H07 127
+H08 109 · H09 54 · H10 71 · H11 69 · H12 87 · H13 98
+```
+
+Render: one merged ribbon mesh for walks and one for crossings (mitred joins, so
+no notches at corners) — **2 draw calls** for the whole network. The plan draws
+the same polylines in `docs/masterplan.png`.
+
+### 13.4 One conflict left open, on purpose
+
+`path/ring-outer` clips the north-west corner of **H13's plot** at five sample
+points. The plot wall leaves 1.85 m between itself and the kerb; the footpath
+needs 2.2 m plus clearance. There is no room, and the two ways out of it both
+change something that is not mine to change alone:
+
+- set H13's plot back ~1.0 m (moves approved architecture), or
+- narrow the verge path to 1.8 m through that frontage (a visible pinch point).
+
+It is reported as **medium** with the suggestion attached, pinned by a test, and
+listed in the round report as a decision for the client. Hiding it — pushing the
+path onto the kerb and relabelling it a crossing — was tried and reverted: the
+screenshot got cleaner and the site got worse.
+
+### 13.5 Verification
+
+| Gate | Result |
+| --- | --- |
+| `tsc --noEmit` | clean |
+| `npx vitest run` | 123/123 (10 files; +19 circulation, incl. 5 negative) |
+| `npm run audit:3d` (strict) | 0 critical / 0 high / **1 medium** (H13 corridor) / 0 low · exit 0 |
+| `npm run build` | `/` 496 kB (+12 kB for the network) · `/admin/3d-editor` 398 kB |
+| Plan | `docs/masterplan.png` draws the whole network |
+
+**Not verified:** the 3D ribbons have not been seen rendered — there is no GPU
+in this environment. The geometry is checked numerically (closed rings, no
+samples inside houses, widths, joins), not visually.

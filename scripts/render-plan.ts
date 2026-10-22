@@ -35,6 +35,7 @@ import {
   sportsKeepOut,
 } from "../src/lib/3d/site";
 import { lagoonLayout } from "../src/lib/3d/lagoon";
+import { footpaths } from "../src/lib/3d/circulation";
 import { partBounds } from "../src/lib/3d/parts";
 
 const SCALE = 4;
@@ -145,6 +146,37 @@ for (const court of COURTS) {
   rect(court.x - hw, court.z - 0.18, court.x + hw, court.z + 0.18, ...line);
 }
 rect(CLUBHOUSE.x - CLUBHOUSE.width / 2, CLUBHOUSE.z - CLUBHOUSE.depth / 2, CLUBHOUSE.x + CLUBHOUSE.width / 2, CLUBHOUSE.z + CLUBHOUSE.depth / 2, 60, 66, 72);
+
+// pedestrian network: verge walks in pale stone, crossings in a sandier tone
+function stroke(points: Array<{ x: number; z: number }>, width: number, r: number, g: number, b: number) {
+  const radius = width / 2;
+  for (let i = 1; i < points.length; i += 1) {
+    const a = points[i - 1]!;
+    const c = points[i]!;
+    const length = Math.hypot(c.x - a.x, c.z - a.z);
+    const steps = Math.max(1, Math.ceil(length * SCALE));
+    for (let step = 0; step <= steps; step += 1) {
+      const t = step / steps;
+      circle(a.x + (c.x - a.x) * t, a.z + (c.z - a.z) * t, radius, r, g, b);
+    }
+  }
+}
+const network = footpaths(
+  SEED_UNITS.map((unit) => ({
+    code: unit.code,
+    position: { x: unit.position.x, z: unit.position.z },
+    rotationY: unit.position.rotationY,
+    typology: unit.typology,
+  })),
+);
+for (const path of network) {
+  if (path.kind === "crossing") continue;
+  stroke(path.points, path.width, 222, 214, 198);
+}
+for (const path of network) {
+  if (path.kind !== "crossing") continue;
+  stroke(path.points, path.width, 206, 194, 168);
+}
 
 // planting beds
 for (const bed of PLANTING_BEDS) rect(bed.minX, bed.minZ, bed.maxX, bed.maxZ, 172, 190, 158);

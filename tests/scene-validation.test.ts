@@ -53,7 +53,14 @@ describe("scene validation — the shipped masterplan", () => {
   it("prints a one-line-per-finding report", () => {
     const text = formatReport(report);
     expect(text).toContain("13 houses · 13 plots");
-    expect(text.split("\n")[1]).toMatch(/^findings: 0 critical, 0 high, 0 medium, 0 low$/);
+    // One medium is known and deliberate: H13's plot leaves 1.85 m between its
+    // wall and the kerb, so the verge footpath cannot fit. Resolving it moves
+    // approved plot geometry, so it stays visible instead of being swallowed.
+    expect(text.split("\n")[1]).toMatch(/^findings: 0 critical, 0 high, 1 medium, 0 low$/);
+    const medium = report.findings.filter((f) => f.severity === "medium");
+    expect(medium).toHaveLength(1);
+    expect(medium[0]!.objectId).toBe("path/ring-outer:walk:2");
+    expect(medium[0]!.subject).toBe("H13");
   });
 
   it("documents the rules it enforces", () => {

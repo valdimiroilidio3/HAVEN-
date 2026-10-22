@@ -26,6 +26,13 @@ import {
   type Rect,
 } from "./site";
 import {
+  PATH,
+  circulation,
+  onCarriageway,
+  pathPoints,
+  type Footpath,
+} from "./circulation";
+import {
   partBounds,
   partTriangleBudget,
   plotParts,
@@ -105,6 +112,12 @@ export interface SceneReport {
     lagoonDrawCalls: number;
     /** Triangle budget of the plot parts, computed from primitive types. */
     plotTriangles: number;
+    /** Footpath polylines in the pedestrian network. */
+    footpaths: number;
+    /** Graph nodes in the pedestrian network. */
+    pathNodes: number;
+    /** Longest walk from the gate to a front door, in metres (null if none). */
+    worstWalk: number | null;
   };
 }
 
@@ -120,6 +133,8 @@ export interface ValidateOptions {
   /** Include greenery checks (scatter is deterministic, so this is cheap). */
   vegetation?: boolean;
   lowQuality?: boolean;
+  /** Test seam: replace the pedestrian network. */
+  network?: (entries: SceneEntryInput[]) => Footpath[];
 }
 
 export const SPATIAL_RULES = [
@@ -136,6 +151,10 @@ export const SPATIAL_RULES = [
   "Lagoon deck furniture and lighting stand on the deck ring: outside the water, inside the paving.",
   "Only the steps enter the lagoon basin; the pavilion and boardwalk stay on the deck.",
   "Reeds and lilies grow in the water; planters and rim rocks stay on the coping.",
+  "Every front door must be reachable on foot from the gate; no path may be severed.",
+  "Footpaths keep clear of carriageways; where they must cross one, the crossing is marked.",
+  "A footpath may enter its own plot's front garden, never a neighbour's plot or any house.",
+  "A footpath is at least 1.2 m wide, and a marked crossing at least 2 m.",
 ] as const;
 
 function rectOf(minX: number, minZ: number, maxX: number, maxZ: number): Rect {
@@ -209,6 +228,7 @@ export function validateScene({
   lowQuality = true,
   layout = plotParts,
   lagoon: lagoonFor = lagoonLayout,
+  network,
 }: ValidateOptions): SceneReport {
   const findings: Finding[] = [];
   const houses = new Map<string, Rect>();
@@ -916,6 +936,103 @@ export function validateScene({
     }
   }
 
+  /* ── Pedestrian circulation ────────────────────────────────────────── */
+  const circulationEntries = entries.map((entry) => ({
+    code: entry.property.code,
+    position: entry.position,
+    rotationY: entry.rotationY,
+    typology: entry.property.typology,
+  }));
+  const paths = network ? network(entries) : undefined;
+  const walk = paths ? circulation(circulationEntries, paths) : circulation(circulationEntries);
+
+  for (const code of walk.unreachable) {
+    const entry = entries.find((candidate) => candidate.property.code === code)!;
+    findings.push({
+      objectId: `${code}/entrance`,
+      subject: code,
+      category: "circulation",
+      severity: "critical",
+      message: `${code} front door cannot be reached on foot from the gate.`,
+      footprint: footprintOf(houses.get(code)!),
+      suggestion: "Draw a footpath from the front door to the verge circuit; the network has to be continuous.",
+      confirmed: true,
+    });
+    void entry;
+  }
+
+  for (const path of walk.paths) {
+    if (onCarriageway(path)) {
+      findings.push({
+        objectId: path.id,
+        subject: path.id,
+        category: "circulation",
+        severity: "high",
+        message: `${path.id} runs along a carriageway instead of across it at a marked crossing.`,
+        suggestion: "Offset the footpath to the verge, or split it into a crossing where it meets the road.",
+        confirmed: true,
+      });
+    }
+    if (path.width < 1.2 - 1e-9 || (path.kind === "crossing" && path.width < 2 - 1e-9)) {
+      findings.push({
+        objectId: path.id,
+        subject: path.id,
+        category: "circulation",
+        severity: "medium",
+        message: `${path.id} is ${path.width.toFixed(1)} m wide, below the ${path.kind === "crossing" ? "2.0" : "1.2"} m minimum.`,
+        suggestion: "Widen the path; two people must be able to pass, and a crossing needs pushchair clearance.",
+        confirmed: true,
+      });
+    }
+  }
+
+  const offending = new Map<string, { point: { id: string; x: number; z: number }; plot: string; count: number }>();
+  for (const point of pathPoints(walk.paths)) {
+    for (const entry of entries) {
+      const house = houses.get(entry.property.code)!;
+      if (point.x < house.minX || point.x > house.maxX || point.z < house.minZ || point.z > house.maxZ) continue;
+      findings.push({
+        objectId: `${point.id}`,
+        subject: entry.property.code,
+        category: "circulation",
+        severity: "critical",
+        message: `${point.id} passes through the footprint of ${entry.property.code}.`,
+        footprint: footprintOf(house),
+        suggestion: "Route the path around the house; a walkway may not cross a building.",
+        confirmed: true,
+      });
+    }
+
+    // Spurs end in their own front garden by design; every other path is public
+    // and must stay on the verge.
+    if (point.id.startsWith("path/spur/")) continue;
+    const plot = plots.find((candidate) => {
+      const own = candidate.interior;
+      return point.x > own.minX && point.x < own.maxX && point.z > own.minZ && point.z < own.maxZ;
+    });
+    if (!plot) continue;
+    const key = `${point.id.split("#")[0]}|${plot.entry.property.code}`;
+    const seen = offending.get(key);
+    if (seen) seen.count += 1;
+    else offending.set(key, { point, plot: plot.entry.property.code, count: 1 });
+  }
+
+  // One finding per path and plot: a clipped corner is one defect, not forty.
+  for (const [key, clash] of offending) {
+    const id = key.split("|")[0]!;
+    const plot = plots.find((candidate) => candidate.entry.property.code === clash.plot)!;
+    findings.push({
+      objectId: id,
+      subject: clash.plot,
+      category: "circulation",
+      severity: "medium",
+      message: `${id} crosses the plot of ${clash.plot} at ${clash.count} sampled point(s), from (${clash.point.x.toFixed(1)}, ${clash.point.z.toFixed(1)}).`,
+      footprint: footprintOf(plot.interior),
+      suggestion: "Either set the plot back to leave a footway corridor, or narrow the path: the public verge has no room here.",
+      confirmed: true,
+    });
+  }
+
   findings.sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] || a.objectId.localeCompare(b.objectId));
 
   const counts: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
@@ -937,6 +1054,9 @@ export function validateScene({
       plotTriangles,
       lagoonParts: lagoonPartsChecked,
       lagoonDrawCalls: new Set(lagoon.parts.map((part) => part.material)).size,
+      footpaths: walk.paths.length,
+      pathNodes: walk.graph.nodes.length,
+      worstWalk: walk.unreachable.length === entries.length ? null : Number(walk.worstWalk.toFixed(1)),
     },
   };
 }

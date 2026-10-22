@@ -6,6 +6,7 @@ import { getMaterials } from "./materials";
 import { HouseExterior } from "./HouseExterior";
 import { SportsPark } from "./SportsPark";
 import { Roads, Driveways } from "./site/Roads";
+import { Footpaths } from "./site/Footpaths";
 import { BedBorders, Flowers, Shrubs, Trees } from "./site/Landscape";
 import { Lagoon } from "./site/Lagoon";
 import { Boundary } from "./site/Boundary";
@@ -24,6 +25,7 @@ export type { TimeOfDay } from "./site/environment";
  * scene the viewer is actually looking at.
  *
  *   site/Roads        carriageways and driveways
+ *   site/Footpaths    the pedestrian network (verge walks and marked crossings)
  *   site/Landscape    planting beds, trees, shrubs, flowers
  *   site/Plot         walls, carport, cars, pool, furniture (merged meshes)
  *   site/Lagoon       lagoon deck, water, pavilion, sun loungers
@@ -110,6 +112,7 @@ export function SiteScene({
       </mesh>
 
       <Roads />
+      <Footpaths entries={entries} night={night} />
       <Driveways entries={entries} plots={plots} />
       <BedBorders exclude={footprints} lowQuality={lowQuality} />
       <Trees entries={entries} plots={plots} exclude={footprints} lowQuality={lowQuality} night={night} />
