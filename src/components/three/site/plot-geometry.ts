@@ -55,6 +55,40 @@ function transformFor(part: Part): THREE.Matrix4 {
   );
 }
 
+/**
+ * Merge primitives into one geometry per material.
+ *
+ * Shared by the private plots and the lagoon. Indexing is normalised first:
+ * `BoxGeometry` is indexed and `IcosahedronGeometry` is not, and three refuses
+ * to merge a mixture — which is exactly the kind of failure that would leave a
+ * rock or a canopy silently missing from the scene.
+ */
+export function mergePartsByMaterial(parts: Part[]): Partial<Record<PartMaterial, THREE.BufferGeometry>> {
+  const buckets = new Map<PartMaterial, THREE.BufferGeometry[]>();
+  for (const part of parts) {
+    const geometry = geometryFor(part);
+    if (!geometry) continue;
+    geometry.applyMatrix4(transformFor(part));
+    const bucket = buckets.get(part.material) ?? [];
+    bucket.push(geometry);
+    buckets.set(part.material, bucket);
+  }
+
+  const merged: Partial<Record<PartMaterial, THREE.BufferGeometry>> = {};
+  for (const [material, list] of buckets) {
+    const anyNonIndexed = list.some((geometry) => !geometry.index);
+    const normalised = anyNonIndexed ? list.map((geometry) => (geometry.index ? geometry.toNonIndexed() : geometry)) : list;
+    const result = normalised.length === 1 ? normalised[0]! : mergeGeometries(normalised, false);
+    if (!result) continue;
+    result.computeBoundingSphere();
+    result.computeBoundingBox();
+    merged[material] = result;
+    // Dispose the intermediates, including the ones produced by toNonIndexed().
+    if (list.length > 1 || anyNonIndexed) for (const geometry of new Set([...list, ...normalised])) geometry.dispose();
+  }
+  return merged;
+}
+
 export function buildPlotGeometries(input: PlotPartsInput): {
   parts: Part[];
   geometries: Partial<Record<PartMaterial, THREE.BufferGeometry>>;
@@ -68,30 +102,11 @@ export function buildPlotGeometries(input: PlotPartsInput): {
     input.walls.map((wall) => `${wall.x}:${wall.z}:${wall.width}:${wall.depth}:${wall.height}`).join("|"),
   ].join("#");
 
-  const cached = cache.get(key);
   const parts = plotParts(input);
+  const cached = cache.get(key);
   if (cached) return { parts, geometries: cached as Partial<Record<PartMaterial, THREE.BufferGeometry>> };
 
-  const buckets = new Map<PartMaterial, THREE.BufferGeometry[]>();
-  for (const part of parts) {
-    const geometry = geometryFor(part);
-    if (!geometry) continue;
-    geometry.applyMatrix4(transformFor(part));
-    const bucket = buckets.get(part.material) ?? [];
-    bucket.push(geometry);
-    buckets.set(part.material, bucket);
-  }
-
-  const geometries: Partial<Record<PartMaterial, THREE.BufferGeometry>> = {};
-  for (const [material, list] of buckets) {
-    const merged = list.length === 1 ? list[0]! : mergeGeometries(list, false);
-    if (!merged) continue;
-    merged.computeBoundingSphere();
-    merged.computeBoundingBox();
-    geometries[material] = merged;
-    if (list.length > 1) list.forEach((geometry) => geometry.dispose());
-  }
-
+  const geometries = mergePartsByMaterial(parts);
   evictIfNeeded();
   cache.set(key, geometries as Record<string, THREE.BufferGeometry>);
   return { parts, geometries };

@@ -44,8 +44,11 @@ export const SITE = {
   gate: { x: 0, z: 80 },
   /** Condominium lagoon: the centrepiece of the central garden. */
   lagoon: { x: 0, z: 4, radiusX: 16, radiusZ: 10.2, deck: 5 },
-  /** Open-air pavilion on the lagoon deck. */
-  pavilion: { x: 0, z: -8.7, width: 11, depth: 4.2 },
+  /**
+   * Open-air pavilion on the lagoon deck. Depth is bounded by the deck ring:
+   * a deeper pavilion would hang over the grass behind the deck.
+   */
+  pavilion: { x: 0, z: -8.6, width: 9.6, depth: 3.2 },
   /** Sports park, west of the circuit. Courts are fenced 5-a-side/3x3 pitches. */
   sportsPark: { minX: -92, maxX: -64, minZ: -58, maxZ: 68 },
 } as const;

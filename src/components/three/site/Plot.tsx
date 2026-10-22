@@ -67,6 +67,14 @@ export function Plot({ entry, pool, garage, rearDepth, night, lowQuality }: Plot
           return materials.foliage[1]!;
         case "foliage2":
           return materials.foliage[2]!;
+        case "reed":
+          return materials.hedge;
+        case "lily":
+          return materials.foliage[1]!;
+        case "rock":
+          return materials.gravel;
+        case "lamp":
+          return materials.lampGlass;
         default:
           return materials[key];
       }

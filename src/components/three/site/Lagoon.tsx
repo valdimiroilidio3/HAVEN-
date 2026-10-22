@@ -1,139 +1,191 @@
 "use client";
 
 import * as React from "react";
+import { MeshReflectorMaterial } from "@react-three/drei";
 import { SITE } from "@/lib/3d/site";
+import type { PartMaterial } from "@/lib/3d/parts";
+import { LAGOON_WATER, lagoonLayout, onDeckRing } from "@/lib/3d/lagoon";
 import { POOL_COLORS } from "../vegetation";
 import { getMaterials } from "../materials";
+import { buildLagoonGeometries } from "./lagoon-geometry";
 
 /**
- * The condominium lagoon: the scene's primary focal point after the houses.
- * Stone deck ring, tiled basin, submerged steps, loungers, parasols and an open
- * pavilion, all sized from `SITE.lagoon` so the validator can check that the
- * pavilion and furniture actually sit on the deck.
+ * The condominium lagoon.
+ *
+ * Everything here is derived from `lib/3d/lagoon.ts`: the deck, coping, boardwalk,
+ * steps, pavilion, planting and lights are declarative parts merged per material
+ * (~250 primitives into about a dozen meshes), and the validator checks those
+ * same parts against the water and the deck edge.
+ *
+ * The water is built in two zones on purpose: a reflective deep centre, and a
+ * transparent shallow ring at the rim so the tiled shelf, the submerged steps
+ * and the lilies stay visible. A single sheet either hides the basin or loses
+ * the reflection.
  */
 
-function Lounger({ position, rotation = 0 }: { position: [number, number, number]; rotation?: number }) {
+function Water({
+  night,
+  lowQuality,
+}: {
+  night: boolean;
+  lowQuality: boolean;
+}) {
   const m = getMaterials();
-  return (
-    <group position={position} rotation={[0, rotation, 0]}>
-      <mesh position={[0, 0.3, 0]} material={m.timber} castShadow receiveShadow>
-        <boxGeometry args={[0.62, 0.1, 1.86]} />
-      </mesh>
-      <mesh position={[0, 0.38, 0.08]} material={m.white} castShadow>
-        <boxGeometry args={[0.56, 0.1, 1.48]} />
-      </mesh>
-      <mesh position={[0, 0.5, -0.64]} rotation={[-0.62, 0, 0]} material={m.white} castShadow>
-        <boxGeometry args={[0.56, 0.09, 0.72]} />
-      </mesh>
-      {[[-0.24, 0.72], [0.24, 0.72], [-0.24, -0.72], [0.24, -0.72]].map(([x, z], index) => (
-        <mesh key={index} position={[x!, 0.15, z!]} material={m.timberDark}>
-          <boxGeometry args={[0.06, 0.26, 0.06]} />
-        </mesh>
-      ))}
-    </group>
-  );
-}
+  const colors = night ? POOL_COLORS.night : POOL_COLORS.day;
+  const rx = LAGOON_WATER.radiusX;
+  const rz = LAGOON_WATER.radiusZ;
 
-function Parasol({ position }: { position: [number, number, number] }) {
-  const m = getMaterials();
+  // Performance mode: one translucent sheet, no extra render pass.
+  if (lowQuality) {
+    return (
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, LAGOON_WATER.y, 0]} scale={[rx - 0.15, rz - 0.15, 1]} material={night ? m.waterNight : m.poolWater}>
+        <circleGeometry args={[1, 64]} />
+      </mesh>
+    );
+  }
+
   return (
-    <group position={position}>
-      <mesh position={[0, 1.15, 0]} material={m.timber} castShadow>
-        <cylinderGeometry args={[0.045, 0.055, 2.3, 8]} />
+    <>
+      {/* Deep centre: mirrors the pavilion, the tree line and the sky. */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, LAGOON_WATER.y, 0]} scale={[rx * 0.86, rz * 0.86, 1]}>
+        <circleGeometry args={[1, 96]} />
+        <MeshReflectorMaterial
+          resolution={256}
+          blur={[320, 96]}
+          mixBlur={1.15}
+          mixStrength={night ? 2.6 : 2.1}
+          mixContrast={1.05}
+          mirror={0.8}
+          depthScale={0.9}
+          minDepthThreshold={0.25}
+          maxDepthThreshold={1.35}
+          distortion={0.22}
+          color={night ? colors.water : "#2c7386"}
+          roughness={night ? 0.14 : 0.2}
+          metalness={0.55}
+          envMapIntensity={night ? 0.9 : 1.3}
+        />
       </mesh>
-      <mesh position={[0, 2.32, 0]} material={m.white} castShadow>
-        <cylinderGeometry args={[1.32, 1.32, 0.09, 16]} />
+      {/* Shallow rim: clear water over the mosaic shelf and the steps. */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, LAGOON_WATER.y - 0.005, 0]} scale={[rx - 0.12, rz - 0.12, 1]}>
+        <ringGeometry args={[0.86, 1, 96]} />
+        <meshStandardMaterial
+          color={night ? colors.water : "#4c9fb0"}
+          roughness={0.08}
+          metalness={0.4}
+          transparent
+          opacity={night ? 0.5 : 0.42}
+          envMapIntensity={1.6}
+          depthWrite={false}
+        />
       </mesh>
-      <mesh position={[0, 2.42, 0]} material={m.timber}>
-        <cylinderGeometry args={[0.03, 0.03, 0.14, 6]} />
-      </mesh>
-    </group>
+    </>
   );
 }
 
 export function Lagoon({ night, lowQuality }: { night: boolean; lowQuality: boolean }) {
   const m = getMaterials();
   const { x, z, radiusX, radiusZ, deck } = SITE.lagoon;
-  const water = night ? m.waterNight : m.poolWater;
+  const { layout, geometries } = React.useMemo(() => buildLagoonGeometries({ lowQuality }), [lowQuality]);
   const colors = night ? POOL_COLORS.night : POOL_COLORS.day;
+
+  const resolve = React.useCallback(
+    (key: PartMaterial) => {
+      switch (key) {
+        case "water":
+          return night ? m.waterNight : m.poolWater;
+        case "glass":
+          return night ? m.glassNight : m.glass;
+        case "reed":
+          return m.hedge;
+        case "lily":
+          return m.foliage[1]!;
+        case "rock":
+          return m.gravel;
+        case "foliage0":
+          return m.foliage[0]!;
+        case "foliage1":
+          return m.foliage[1]!;
+        case "foliage2":
+          return m.foliage[2]!;
+        case "carPaint0":
+        case "carPaint1":
+        case "carPaint2":
+          return m.carPaint[0]!;
+        case "carGlass":
+          return m.carGlass;
+        case "poolTile":
+          return m.poolTile;
+        case "lamp":
+          return m.lampGlass;
+        default:
+          return m[key];
+      }
+    },
+    [m, night],
+  );
+
+  const bollardLights = React.useMemo(() => {
+    // Every second bollard casts light; the rest are emissive heads.
+    return lagoonLayout({ lowQuality })
+      .parts.filter((part) => part.id.endsWith("/head") && Number(part.id.split("/")[2]) % 2 === 0)
+      .map((part) => part.shape.position);
+  }, [lowQuality]);
+
+  const pavilionLocalZ = SITE.pavilion.z - SITE.lagoon.z;
+
   return (
     <group position={[x, 0, z]}>
-      {/* stone deck: one ellipse under the water, so the rim reads as coping */}
-      <mesh
-        rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, 0.07, 0]}
-        scale={[radiusX + deck, radiusZ + deck, 1]}
-        material={m.stone}
-        receiveShadow
-      />
-      {/* basin: mosaic walls just under the rim */}
-      <mesh position={[0, -0.34, 0]} scale={[radiusX + 0.22, 1, radiusZ + 0.22]} material={m.poolTile}>
-        <cylinderGeometry args={[1, 1, 0.9, 96, 1, true]} />
+      {/* Paving: the deck, a darker wet band at the water line, then the coping. */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.08, 0]} scale={[radiusX + deck, radiusZ + deck, 1]} material={m.stone} receiveShadow>
+        <circleGeometry args={[1, layout.segments]} />
       </mesh>
-      <mesh position={[0, -0.36, 0]} scale={[radiusX, 1, radiusZ]} rotation={[-Math.PI / 2, 0, 0]} material={m.poolTile} receiveShadow>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.085, 0]} scale={[radiusX, radiusZ, 1]} material={m.concrete} receiveShadow>
+        <ringGeometry args={[1, 1.05, layout.segments]} />
+      </mesh>
+
+      {/* Basin: mosaic wall, a deep tiled floor, and a lighter shelf under the rim
+          that shows through the transparent shallow water. */}
+      <mesh position={[0, LAGOON_WATER.floorY / 2, 0]} scale={[radiusX + 0.22, 1, radiusZ + 0.22]} material={m.poolTile}>
+        <cylinderGeometry args={[1, 1, Math.abs(LAGOON_WATER.floorY), 96, 1, true]} />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, LAGOON_WATER.floorY, 0]} scale={[radiusX, radiusZ, 1]} material={m.poolTile} receiveShadow>
         <circleGeometry args={[1, 96]} />
       </mesh>
-      {/* water */}
-      <mesh position={[0, 0.12, 0]} scale={[radiusX - 0.15, 1, radiusZ - 0.15]} rotation={[-Math.PI / 2, 0, 0]} material={water}>
-        <circleGeometry args={[1, 96]} />
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, LAGOON_WATER.floorY + 0.28, 0]} scale={[radiusX, radiusZ, 1]} material={m.concrete} receiveShadow>
+        <ringGeometry args={[0.88, 1, layout.segments]} />
       </mesh>
-      {/* stone steps down to the water on the south side */}
-      {[0, 1, 2, 3].map((step) => (
-        <mesh
-          key={step}
-          position={[0, -0.09 - step * 0.09, radiusZ + 0.5 - step * 0.28]}
-          material={m.concrete}
-          receiveShadow
-          castShadow
-        >
-          <boxGeometry args={[4.6, 0.1, 0.32]} />
-        </mesh>
+
+      <Water night={night} lowQuality={lowQuality} />
+
+      {/* Merged structure, deck detail, furniture, planting and bollards. */}
+      {(Object.keys(geometries) as PartMaterial[]).map((key) => (
+        <mesh key={key} geometry={geometries[key]} material={resolve(key)} castShadow receiveShadow />
       ))}
-      {/* sun-lounger row along the west rim, like a resort deck */}
-      {!lowQuality &&
-        [-3.4, -1.1, 1.2, 3.5, 5.8].map((offset, index) => (
-          <Lounger key={offset} position={[-(radiusX + deck * 0.55), 0.08, offset + index * 0.1]} rotation={Math.PI / 2} />
-        ))}
-      {!lowQuality && <Parasol position={[-(radiusX + deck * 0.9), 0.08, -6.2]} />}
-      {!lowQuality && <Parasol position={[-6, 0.08, -(radiusZ + deck * 0.62)]} />}
-      {/* pavilion at the north end of the deck */}
-      <group position={[SITE.pavilion.x, 0, SITE.pavilion.z]}>
-        <mesh position={[0, 0.12, 0]} material={m.concrete} receiveShadow castShadow>
-          <boxGeometry args={[SITE.pavilion.width + 1.6, 0.24, SITE.pavilion.depth + 2]} />
-        </mesh>
-        {[-1, 1].map((side) => (
-          <mesh key={side} position={[(side * (SITE.pavilion.width - 0.8)) / 2, 1.85, 0]} material={m.timber} castShadow>
-            <boxGeometry args={[0.18, 3.7, SITE.pavilion.depth - 0.6]} />
-          </mesh>
-        ))}
-        {[-1, 1].map((side) => (
-          <mesh key={`col-${side}`} position={[(side * (SITE.pavilion.width - 0.8)) / 2, 1.85, (SITE.pavilion.depth - 0.9) / 2]} material={m.timber} castShadow>
-            <boxGeometry args={[0.16, 3.7, 0.16]} />
-          </mesh>
-        ))}
-        <mesh position={[0, 3.82, 0]} material={m.timberDark} castShadow receiveShadow>
-          <boxGeometry args={[SITE.pavilion.width + 1.5, 0.18, SITE.pavilion.depth + 1.6]} />
-        </mesh>
-        {Array.from({ length: 13 }).map((_, index) => (
-          <mesh
-            key={index}
-            position={[-SITE.pavilion.width / 2 + 0.6 + index * ((SITE.pavilion.width - 1.2) / 12), 3.94, 0]}
-            material={m.timber}
-            castShadow
-          >
-            <boxGeometry args={[0.18, 0.12, SITE.pavilion.depth + 1.7]} />
-          </mesh>
-        ))}
-        {night && <pointLight position={[0, 3.4, 0]} intensity={4} distance={16} decay={2} color="#ffcf9a" />}
-      </group>
+
       {night && (
         <>
-          <pointLight position={[0, 0.8, 0]} intensity={7} distance={30} decay={2} color={colors.water} />
-          <mesh position={[0, 0.16, 0]} scale={[radiusX - 0.2, 1, radiusZ - 0.2]} rotation={[-Math.PI / 2, 0, 0]} material={m.poolLight}>
-            <ringGeometry args={[0.86, 0.88, 96]} />
+          <pointLight position={[0, 0.9, 0]} intensity={9} distance={34} decay={2} color={colors.water} />
+          <pointLight position={[0, 3.4, pavilionLocalZ]} intensity={5} distance={18} decay={2} color="#ffcf9a" />
+          {!lowQuality &&
+            bollardLights.map(([bx, , bz], index) => (
+              <pointLight key={index} position={[bx, 1.05, bz]} intensity={1.6} distance={7} decay={2} color="#ffbe83" />
+            ))}
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, LAGOON_WATER.y + 0.015, 0]} scale={[radiusX * 0.94, radiusZ * 0.94, 1]} material={m.poolLight}>
+            <ringGeometry args={[0.985, 1, 96]} />
           </mesh>
         </>
       )}
     </group>
   );
+}
+
+/** Kept for the plan renderer: the deck silhouette in world space. */
+export function lagoonDeckCorners(): Array<{ x: number; z: number }> {
+  const corners: Array<{ x: number; z: number }> = [];
+  for (let angle = 0; angle < 360; angle += 15) {
+    const point = onDeckRing(angle, 1);
+    corners.push({ x: SITE.lagoon.x + point.x, z: SITE.lagoon.z + point.z });
+  }
+  return corners;
 }

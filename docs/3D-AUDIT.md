@@ -328,3 +328,89 @@ the same function — but nothing yet prevents publishing a draft with blocking 
 warns and tints, it does not refuse. That is a deliberate product decision (a manager may publish a
 deliberate exception); if it should become a hard gate, the check belongs in `publishSceneAction`,
 where the same `validateScene` call is already available.
+
+---
+
+## 12. The lagoon
+
+The lagoon was the weakest object in the scene: a flat ellipse of stone, a flat
+ellipse of water, four boxes as steps and a pavilion with no interior. It is also
+the one object every visitor looks at first, because the road rings it.
+
+### 12.1 Rebuilt as data
+
+`src/lib/3d/lagoon.ts` now describes the whole feature as parts, on the same
+contract as the private plots:
+
+| Element | Full quality | Performance | Rule it obeys |
+| --- | --- | --- | --- |
+| Stone coping | 72 segments | 36 | sits in the 0.34 m band outside the water |
+| Timber boardwalk | 26 planks | 14 | east arc, inside the paving edge |
+| Steps and handrails | 4 + 4 | 4 + 4 | the only structure allowed over the water |
+| Bollards | 8 posts + heads | 6 | outer ring, pavilion and steps arcs kept clear |
+| Pavilion | 41 parts | 30 | slab, floor, four posts, beams, rafters, bar, 3 stools, bench, 2 lanterns |
+| Loungers / tables / parasols | 6 / 3 / 2 | 3 / 2 / 1 | west deck, facing the water |
+| Reeds, lilies, rim rocks, planters | 33 + 6 + 4 + 4 | 33 + 0 + 4 + 4 | reeds and lilies in the water, the rest on the coping |
+
+**235 parts merged into 12 draw calls at full quality** (11 at performance
+quality), one mesh per material. The deck detail alone — coping, planks,
+rafters — is over a hundred primitives that would otherwise be a hundred draw
+calls.
+
+### 12.2 Two bugs found by building it
+
+**Rotation order.** `partBounds` composed euler rotations as `RZ·RY·RX` while
+three.js composes `RX·RY·RZ`. For axis-aligned pieces the two agree, which is why
+nothing had noticed; the first tilted piece (a lounger backrest) exposed it.
+Every bound the validator had ever computed for a rotated part was slightly
+wrong. Fixed and pinned against three.js in `tests/plot-geometry.test.ts`.
+
+**Deck ring model.** The deck is drawn as an ellipse with semi-axes
+`(rx + deck, rz + deck)`, but placements were computed by scaling both water
+radii by a single factor — a different, narrower curve. Furniture placed that way
+drifts off the paving at the ends of the ellipse. The ring is now parametrised by
+distance across the deck (`t`), and `insideDeckEllipse()` is the single predicate
+the renderer, the validator and the plan share.
+
+Both were caught by the new lagoon rules before anything was rendered — the
+run went from `19 high, 1 medium` to `0` as the geometry was corrected, not as
+findings were suppressed.
+
+### 12.3 Water
+
+The surface is built in two zones, because one sheet cannot do both jobs:
+
+- **Deep centre** (86% of the radius): `MeshReflectorMaterial` — it mirrors the
+  pavilion, the tree line and the sky. Full quality only; performance mode keeps
+  a single translucent sheet and no second render pass.
+- **Shallow rim**: transparent water over a lighter tiled shelf, so the mosaic,
+  the submerged steps and the lilies stay visible.
+
+The basin was deepened to 0.62 m with a visible shelf, the water sits *below* the
+coping instead of above the paving, and night adds an underwater light, a rim
+glow, a warm pavilion light and per-bollard pools of light.
+
+### 12.4 Rules added
+
+4. Lagoon furniture and lighting stand on the deck ring: outside the water,
+   inside the paving. *(high / medium)*
+5. Only the steps enter the basin; the pavilion and boardwalk stay on the deck. *(high)*
+6. Reeds and lilies grow in the water; planters and rim rocks stay on the coping. *(low / medium)*
+
+`validateScene` takes an optional `lagoon` layout generator, so tests can prove
+these fire: a lounger in the water, a jetty built over the basin and a bollard
+pushed past the paving are each covered.
+
+### 12.5 Verification
+
+| Gate | Result |
+| --- | --- |
+| `npx vitest run` | 104/104 (9 files; +15 lagoon, +2 bounds) |
+| `npm run audit:3d` | 0 critical / 0 high / 0 medium / 0 low · lagoon 134 parts → 11 draw calls (performance layout) |
+| Plan | `docs/masterplan.png` now draws the boardwalk, steps, bollards and the pavilion roof line |
+
+**Not verified:** the reflection has not been seen — there is no GPU here. The
+reflector is gated behind full quality precisely so that a device that dislikes
+it can switch to performance mode without losing the feature. This is the one
+change in this round that genuinely needs a human eye before it is called
+finished.

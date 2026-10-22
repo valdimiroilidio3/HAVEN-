@@ -37,9 +37,25 @@ export type PartMaterial =
   | "carPaint0"
   | "carPaint1"
   | "carPaint2"
-  | "carGlass";
+  | "carGlass"
+  /* Lagoon-specific surfaces; the plot resolver never emits these. */
+  | "reed"
+  | "lily"
+  | "rock"
+  | "lamp";
 
-export type PartGroup = "boundary" | "carport" | "car" | "pool" | "deck" | "furniture" | "planting";
+export type PartGroup =
+  | "boundary"
+  | "carport"
+  | "car"
+  | "pool"
+  | "deck"
+  | "furniture"
+  | "planting"
+  /** Built elements: the pavilion, boardwalk and steps. */
+  | "structure"
+  /** Luminaires: bollards and lanterns. */
+  | "light";
 
 export interface PartShape {
   kind: "box" | "cylinder" | "icosahedron" | "torus";
@@ -80,39 +96,44 @@ function shapeExtents(shape: PartShape): [number, number, number] {
   }
 }
 
-/** World-space AABB of a part — rotation-aware, so wheel discs are not oversized. */
+/**
+ * Rotation matrix for an `[x, y, z]` euler in three.js's default `XYZ` order.
+ *
+ * This has to match the renderer exactly or the validator checks a shape the
+ * scene never draws: three composes XYZ as `RX · RY · RZ`, while applying the
+ * three rotations to a vector one after another (the obvious implementation)
+ * gives `RZ · RY · RX` — mirror-wrong for tilted pieces such as a lounger back.
+ * The check below in `tests/plot-geometry.test.ts` pins it against three.
+ */
+function rotationMatrix(rx: number, ry: number, rz: number): [number, number, number, number, number, number, number, number, number] {
+  const a = Math.cos(rx), b = Math.sin(rx);
+  const c = Math.cos(ry), d = Math.sin(ry);
+  const e = Math.cos(rz), f = Math.sin(rz);
+  return [
+    c * e, -c * f, d,
+    a * f + b * e * d, a * e - b * f * d, -b * c,
+    b * f - a * e * d, b * e + a * f * d, a * c,
+  ];
+}
+
+/** World-space AABB of a part — rotation-aware, and matching the renderer. */
 export function partBounds(part: Part, origin: { x: number; z: number }, rotationDeg: number): PartBounds {
   const [w, h, d] = shapeExtents(part.shape);
   const scale = part.shape.scale ?? [1, 1, 1];
   const half = [(w / 2) * scale[0]!, (h / 2) * scale[1]!, (d / 2) * scale[2]!] as const;
   const [rx, ry, rz] = part.shape.rotation ?? [0, 0, 0];
+  const [m0, m1, m2, m3, m4, m5, m6, m7, m8] = rotationMatrix(rx, ry, rz);
 
-  // Rotate the eight corners by the part's own rotation (XYZ euler), then place.
-  const cosX = Math.cos(rx), sinX = Math.sin(rx);
-  const cosY = Math.cos(ry), sinY = Math.sin(ry);
-  const cosZ = Math.cos(rz), sinZ = Math.sin(rz);
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
   for (const sx of [-1, 1]) {
     for (const sy of [-1, 1]) {
       for (const sz of [-1, 1]) {
-        let x = half[0] * sx;
-        let y = half[1] * sy;
-        let z = half[2] * sz;
-        // X
-        let t = y * cosX - z * sinX;
-        z = y * sinX + z * cosX;
-        y = t;
-        // Y
-        t = x * cosY + z * sinY;
-        z = -x * sinY + z * cosY;
-        x = t;
-        // Z
-        t = x * cosZ - y * sinZ;
-        y = x * sinZ + y * cosZ;
-        x = t;
-        const wx = x + part.shape.position[0];
-        const wy = y + part.shape.position[1];
-        const wz = z + part.shape.position[2];
+        const lx = half[0] * sx;
+        const ly = half[1] * sy;
+        const lz = half[2] * sz;
+        const wx = m0 * lx + m1 * ly + m2 * lz + part.shape.position[0];
+        const wy = m3 * lx + m4 * ly + m5 * lz + part.shape.position[1];
+        const wz = m6 * lx + m7 * ly + m8 * lz + part.shape.position[2];
         minX = Math.min(minX, wx); maxX = Math.max(maxX, wx);
         minY = Math.min(minY, wy); maxY = Math.max(maxY, wy);
         minZ = Math.min(minZ, wz); maxZ = Math.max(maxZ, wz);
@@ -120,21 +141,19 @@ export function partBounds(part: Part, origin: { x: number; z: number }, rotatio
     }
   }
 
+  // Plot rotation about Y, then translation.
   const rad = (rotationDeg * Math.PI) / 180;
   const cos = Math.cos(rad);
   const sin = Math.sin(rad);
-  let ox = 0, oz = 0;
   const outX: number[] = [];
   const outZ: number[] = [];
   for (const [cx, cz] of [[minX, minZ], [maxX, minZ], [minX, maxZ], [maxX, maxZ]] as const) {
     outX.push(cx * cos + cz * sin);
     outZ.push(-cx * sin + cz * cos);
   }
-  ox = origin.x + Math.min(...outX);
-  oz = origin.z + Math.min(...outZ);
   return {
-    minX: ox,
-    minZ: oz,
+    minX: origin.x + Math.min(...outX),
+    minZ: origin.z + Math.min(...outZ),
     maxX: origin.x + Math.max(...outX),
     maxZ: origin.z + Math.max(...outZ),
     minY,

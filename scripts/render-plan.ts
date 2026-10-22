@@ -34,6 +34,8 @@ import {
   scatterTrees,
   sportsKeepOut,
 } from "../src/lib/3d/site";
+import { lagoonLayout } from "../src/lib/3d/lagoon";
+import { partBounds } from "../src/lib/3d/parts";
 
 const SCALE = 4;
 const MIN_X = -106;
@@ -110,9 +112,21 @@ rect(SITE.boulevard.maxX, SITE.boulevard.minZ, SITE.boulevard.maxX + 1.6, SITE.b
 rect(SITE.serviceRoad.minX, SITE.serviceRoad.minZ - 1.6, SITE.serviceRoad.maxX, SITE.serviceRoad.maxZ + 1.6, 196, 192, 182);
 rect(SITE.serviceRoad.minX, SITE.serviceRoad.minZ, SITE.serviceRoad.maxX, SITE.serviceRoad.maxZ, 122, 122, 122);
 
-// lagoon deck + water + pavilion
+// lagoon: paved deck, wet band at the water line, basin, then the built detail
 ellipse(SITE.lagoon.x, SITE.lagoon.z, SITE.lagoon.radiusX + SITE.lagoon.deck, SITE.lagoon.radiusZ + SITE.lagoon.deck, 214, 205, 186);
+ellipse(SITE.lagoon.x, SITE.lagoon.z, SITE.lagoon.radiusX + 0.9, SITE.lagoon.radiusZ + 0.9, 196, 188, 170);
 ellipse(SITE.lagoon.x, SITE.lagoon.z, SITE.lagoon.radiusX, SITE.lagoon.radiusZ, 68, 168, 190);
+// boardwalk (east) and the steps (south), straight from the lagoon layout data
+for (const part of lagoonLayout({ lowQuality: false }).parts) {
+  const isPlank = part.id.startsWith("lagoon/boardwalk/");
+  const isStep = part.id.startsWith("lagoon/steps/") && part.id.split("/").length === 3;
+  const isBollard = part.id.endsWith("/post");
+  if (!isPlank && !isStep && !isBollard) continue;
+  const b = partBounds(part, { x: SITE.lagoon.x, z: SITE.lagoon.z }, 0);
+  if (isStep) rect(b.minX, b.minZ, b.maxX, b.maxZ, 206, 198, 182);
+  else if (isPlank) rect(b.minX, b.minZ, b.maxX, b.maxZ, 176, 146, 106);
+  else rect(b.minX, b.minZ, b.maxX, b.maxZ, 90, 90, 84);
+}
 
 // sports park
 rect(SITE.sportsPark.minX, SITE.sportsPark.minZ, SITE.sportsPark.maxX, SITE.sportsPark.maxZ, 184, 197, 168);
@@ -179,8 +193,10 @@ for (const bed of PLANTING_BEDS) {
   rect(bed.minX, bed.minZ, bed.minX + 0.42, bed.maxZ, 60, 92, 52);
   rect(bed.maxX - 0.42, bed.minZ, bed.maxX, bed.maxZ, 60, 92, 52);
 }
-// pavilion on the lagoon deck
+// pavilion on the lagoon deck: slab, floor, then the roof outline
+rect(SITE.pavilion.x - SITE.pavilion.width / 2 - 0.5, SITE.pavilion.z - SITE.pavilion.depth / 2 - 0.35, SITE.pavilion.x + SITE.pavilion.width / 2 + 0.5, SITE.pavilion.z + SITE.pavilion.depth / 2 + 0.35, 198, 190, 172);
 rect(SITE.pavilion.x - SITE.pavilion.width / 2, SITE.pavilion.z - SITE.pavilion.depth / 2, SITE.pavilion.x + SITE.pavilion.width / 2, SITE.pavilion.z + SITE.pavilion.depth / 2, 120, 96, 70);
+rect(SITE.pavilion.x - SITE.pavilion.width / 2 - 0.45, SITE.pavilion.z - SITE.pavilion.depth / 2 - 0.3, SITE.pavilion.x + SITE.pavilion.width / 2 + 0.45, SITE.pavilion.z - SITE.pavilion.depth / 2 - 0.12, 150, 124, 92);
 
 // fence outline
 rect(SITE.fence.minX - 0.6, SITE.fence.minZ - 0.6, SITE.fence.maxX + 0.6, SITE.fence.minZ + 0.6, 66, 66, 66);

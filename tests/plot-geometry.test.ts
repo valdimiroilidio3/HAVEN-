@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { SEED_UNITS } from "@/lib/domain/inventory";
 import { garagePlan, plotRearDepth, plotWallsFor, poolFor } from "@/lib/3d/site";
 import { buildPlotGeometries, disposePlotGeometries, plotGeometryStats } from "@/components/three/site/plot-geometry";
+import { partBounds } from "@/lib/3d/parts";
 
 /**
  * The renderer's plot meshes built headlessly.
@@ -78,5 +79,64 @@ describe("plot geometry merging", () => {
     const { parts, geometries } = buildPlotGeometries(input);
     expect(parts.length).toBeGreaterThan(20);
     expect(Object.keys(geometries).length).toBeLessThan(parts.length / 2);
+  });
+});
+
+describe("part bounds", () => {
+  // The validator checks bounds, the renderer draws the primitive. If the two
+  // disagree, findings point at geometry that is not there. This pins the
+  // rotation maths to three.js itself, including the tilted pieces (a lounger
+  // back is rotated on two axes at once).
+  const cases: Array<{ size: [number, number, number]; position: [number, number, number]; rotation: [number, number, number] }> = [
+    { size: [2, 1, 0.4], position: [1, 0.5, -2], rotation: [0, 0, 0] },
+    { size: [0.58, 0.1, 0.78], position: [1, 1, 1], rotation: [-0.66, 0.9, 0] },
+    { size: [1, 0.5, 0.2], position: [0.3, 2, -1], rotation: [0.3, 1.1, 0.4] },
+    { size: [0.2, 3.5, 0.2], position: [-3, 1.75, 4], rotation: [0, -2.2, 0] },
+  ];
+
+  it("matches three.js transformed geometry", () => {
+    for (const testCase of cases) {
+      const part = {
+        id: "test/part",
+        group: "structure" as const,
+        material: "timber" as const,
+        shape: { kind: "box" as const, size: testCase.size, position: testCase.position, rotation: testCase.rotation },
+      };
+      const bounds = partBounds(part, { x: 0, z: 0 }, 0);
+
+      const geometry = new THREE.BoxGeometry(...testCase.size);
+      geometry.applyMatrix4(
+        new THREE.Matrix4().compose(
+          new THREE.Vector3(...testCase.position),
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(...testCase.rotation)),
+          new THREE.Vector3(1, 1, 1),
+        ),
+      );
+      geometry.computeBoundingBox();
+      const box = geometry.boundingBox!;
+      expect(bounds.minX).toBeCloseTo(box.min.x, 5);
+      expect(bounds.maxX).toBeCloseTo(box.max.x, 5);
+      expect(bounds.minY).toBeCloseTo(box.min.y, 5);
+      expect(bounds.maxY).toBeCloseTo(box.max.y, 5);
+      expect(bounds.minZ).toBeCloseTo(box.min.z, 5);
+      expect(bounds.maxZ).toBeCloseTo(box.max.z, 5);
+      geometry.dispose();
+    }
+  });
+
+  it("applies the plot rotation about the house origin", () => {
+    const part = {
+      id: "test/part",
+      group: "structure" as const,
+      material: "timber" as const,
+      shape: { kind: "box" as const, size: [4, 1, 0.2] as [number, number, number], position: [2, 0.5, 0] as [number, number, number] },
+    };
+    const straight = partBounds(part, { x: 10, z: 5 }, 0);
+    const turned = partBounds(part, { x: 10, z: 5 }, 90);
+    expect(straight.minX).toBeCloseTo(10, 6);
+    expect(straight.maxX).toBeCloseTo(14, 6);
+    expect(turned.minZ).toBeCloseTo(5 - 4, 6);
+    expect(turned.maxZ).toBeCloseTo(5, 6);
+    expect(turned.maxX).toBeCloseTo(10.1, 6);
   });
 });

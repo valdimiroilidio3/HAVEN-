@@ -1,4 +1,5 @@
 import type { Typology } from "@/lib/domain/types";
+import { inLagoonWater, insideDeckEllipse, lagoonLayout, type LagoonLayout } from "./lagoon";
 import {
   COURTS,
   CLUBHOUSE,
@@ -98,6 +99,10 @@ export interface SceneReport {
     flowers: number;
     /** Draw calls the merged plot meshes need (one mesh per material). */
     plotDrawCalls: number;
+    /** Lagoon parts (deck, pavilion, furniture, planting, lights) inspected. */
+    lagoonParts: number;
+    /** Draw calls the merged lagoon meshes need (one per material). */
+    lagoonDrawCalls: number;
     /** Triangle budget of the plot parts, computed from primitive types. */
     plotTriangles: number;
   };
@@ -106,10 +111,12 @@ export interface SceneReport {
 export interface ValidateOptions {
   entries: SceneEntryInput[];
   /**
-   * Test seam: replace the plot layout generator. Production callers never set
-   * this; the tests use it to prove that the rules fire on broken layouts.
+   * Test seams: replace the plot and lagoon layout generators. Production
+   * callers never set these; the tests use them to prove that the rules fire on
+   * broken layouts instead of only passing good ones.
    */
   layout?: (input: PlotPartsInput) => Part[];
+  lagoon?: (input: { lowQuality: boolean }) => LagoonLayout;
   /** Include greenery checks (scatter is deterministic, so this is cheap). */
   vegetation?: boolean;
   lowQuality?: boolean;
@@ -126,6 +133,9 @@ export const SPATIAL_RULES = [
   "No object belonging to a plot may occupy the volume of its own house.",
   "Sports courts must be disjoint, inside the perimeter and clear of every house.",
   "Street lamps belong beside the carriageway, never on it and never inside a plot.",
+  "Lagoon deck furniture and lighting stand on the deck ring: outside the water, inside the paving.",
+  "Only the steps enter the lagoon basin; the pavilion and boardwalk stay on the deck.",
+  "Reeds and lilies grow in the water; planters and rim rocks stay on the coping.",
 ] as const;
 
 function rectOf(minX: number, minZ: number, maxX: number, maxZ: number): Rect {
@@ -193,7 +203,13 @@ function drivewayBounds(driveway: Driveway): Rect {
 
 const SEVERITY_ORDER: Record<Severity, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 
-export function validateScene({ entries, vegetation = true, lowQuality = true, layout = plotParts }: ValidateOptions): SceneReport {
+export function validateScene({
+  entries,
+  vegetation = true,
+  lowQuality = true,
+  layout = plotParts,
+  lagoon: lagoonFor = lagoonLayout,
+}: ValidateOptions): SceneReport {
   const findings: Finding[] = [];
   const houses = new Map<string, Rect>();
   for (const entry of entries) houses.set(entry.property.code, houseRect(entry));
@@ -611,6 +627,112 @@ export function validateScene({ entries, vegetation = true, lowQuality = true, l
     }
   }
 
+  /* ── Lagoon furniture, planting and lights ────────────────────────────
+   * The deck is an ellipse, so "is this lounger on the deck?" is not a
+   * rectangle test: a piece that is clear at one bearing can be over the water
+   * twenty degrees later. These checks use the same parametric ring the
+   * renderer places the parts on.
+   */
+  const lagoon = lagoonFor({ lowQuality });
+  let lagoonPartsChecked = 0;
+  for (const part of lagoon.parts) {
+    lagoonPartsChecked += 1;
+    // Lagoon parts are authored in the lagoon's local frame.
+    const bounds = partBounds(part, { x: SITE.lagoon.x, z: SITE.lagoon.z }, 0);
+    const centre = { x: (bounds.minX + bounds.maxX) / 2, z: (bounds.minZ + bounds.maxZ) / 2 };
+    const corners: Array<[number, number]> = [
+      [bounds.minX, bounds.minZ],
+      [bounds.maxX, bounds.minZ],
+      [bounds.minX, bounds.maxZ],
+      [bounds.maxX, bounds.maxZ],
+    ];
+    const isStep = part.id.startsWith("lagoon/steps/");
+    const isCanopy = part.id.endsWith("/canopy");
+    const isWaterPlant = part.id.startsWith("lagoon/reed/") || part.id.startsWith("lagoon/lily/");
+    const isDeckPlant = part.group === "planting" && !isWaterPlant;
+
+    const isStairPart = part.id.startsWith("lagoon/steps/");
+
+    if (!isStairPart && (part.group === "furniture" || part.group === "light")) {
+      if (inLagoonWater(centre.x, centre.z, 0.995)) {
+        findings.push({
+          objectId: part.id,
+          subject: "lagoon",
+          category: "grounding",
+          severity: "high",
+          message: `${part.id} stands in the water.`,
+          footprint: footprintOf(bounds),
+          suggestion: "Place deck furniture by bearing and radius factor on the deck ring, outside the water ellipse.",
+          confirmed: true,
+        });
+      } else if (!isCanopy && corners.some(([cx, cz]) => !insideDeckEllipse(cx, cz))) {
+        findings.push({
+          objectId: part.id,
+          subject: "lagoon",
+          category: "boundary",
+          severity: "medium",
+          message: `${part.id} overhangs the outer deck edge.`,
+          footprint: footprintOf(bounds),
+          suggestion: "Pull the piece inward on the ring: the deck is 5 m wide, so a parasol or lounger needs its radius subtracted.",
+          confirmed: true,
+        });
+      }
+    }
+
+    if (isWaterPlant && !inLagoonWater(centre.x, centre.z, 0.99)) {
+      findings.push({
+        objectId: part.id,
+        subject: "lagoon",
+        category: "grounding",
+        severity: "low",
+        message: `${part.id} grows out of the water.`,
+        footprint: footprintOf(bounds),
+        suggestion: "Reeds and lilies belong inside the basin, at a radius factor below 0.95.",
+        confirmed: true,
+      });
+    }
+
+    if (isDeckPlant && inLagoonWater(centre.x, centre.z, 0.995)) {
+      findings.push({
+        objectId: part.id,
+        subject: "lagoon",
+        category: "grounding",
+        severity: "medium",
+        message: `${part.id} is planted in the water.`,
+        footprint: footprintOf(bounds),
+        suggestion: "Planters and rim rocks sit on the coping, outside the water ellipse.",
+        confirmed: true,
+      });
+    }
+
+    if (part.group === "structure" && !isStep) {
+      if (corners.some(([cx, cz]) => inLagoonWater(cx, cz, 0.99))) {
+        findings.push({
+          objectId: part.id,
+          subject: "lagoon",
+          category: "clearance",
+          severity: "high",
+          message: `${part.id} is built over the water.`,
+          footprint: footprintOf(bounds),
+          suggestion: "Keep the pavilion and boardwalk on the deck ring; only the steps enter the basin.",
+          confirmed: true,
+        });
+      }
+      if (corners.some(([cx, cz]) => !insideDeckEllipse(cx, cz))) {
+        findings.push({
+          objectId: part.id,
+          subject: "lagoon",
+          category: "boundary",
+          severity: "high",
+          message: `${part.id} hangs over the edge of the deck.`,
+          footprint: footprintOf(bounds),
+          suggestion: "Size the pavilion from the deck ring depth (5 m) and keep its overhang inside the ellipse.",
+          confirmed: true,
+        });
+      }
+    }
+  }
+
   /* ── Vegetation ────────────────────────────────────────────────────── */
   let treeCount = 0;
   let flowerCount = 0;
@@ -813,6 +935,8 @@ export function validateScene({ entries, vegetation = true, lowQuality = true, l
       flowers: flowerCount,
       plotDrawCalls,
       plotTriangles,
+      lagoonParts: lagoonPartsChecked,
+      lagoonDrawCalls: new Set(lagoon.parts.map((part) => part.material)).size,
     },
   };
 }
@@ -822,6 +946,7 @@ export function formatReport(report: SceneReport): string {
   const lines = [
     `scene: ${report.checked.houses} houses · ${report.checked.plots} plots · ${report.checked.pools} pools · ${report.checked.carports} carports · ${report.checked.parts} parts`,
     `findings: ${report.counts.critical} critical, ${report.counts.high} high, ${report.counts.medium} medium, ${report.counts.low} low`,
+    `lagoon: ${report.checked.lagoonParts} parts → ${report.checked.lagoonDrawCalls} draw calls`,
     `budget: plots ${report.checked.plotDrawCalls} draw calls (${(report.checked.plotDrawCalls / Math.max(1, report.checked.plots)).toFixed(1)}/plot) · ${report.checked.plotTriangles.toLocaleString("en-US")} triangles · ${report.checked.trees} trees · ${report.checked.flowers} flowers`,
   ];
   for (const finding of report.findings) {

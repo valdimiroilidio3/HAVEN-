@@ -17,6 +17,12 @@ const nextConfig: NextConfig = {
     ],
   },
   eslint: { ignoreDuringBuilds: true },
+  /**
+   * Dev-server origins allowed to load /_next/* assets. The sandbox preview
+   * proxies the app under a per-session host, and Next warns (and will soon
+   * refuse) cross-origin dev requests without this list.
+   */
+  allowedDevOrigins: ["*.e2b.app", "localhost", "127.0.0.1"],
 };
 
 export default nextConfig;
