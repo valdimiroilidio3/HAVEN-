@@ -909,3 +909,127 @@ caber na baía mais funda.
 - **Sem verificação em WebGL.** As imagens vêm de um rasterizador CPU sobre a
   geometria real; o resultado no browser não foi visto. O que os testes provam é
   a geometria — dimensões, assentamento, simetria, assinatura.
+
+## 19. Os residentes
+
+### 19.1 Causa: não havia residentes
+
+Antes desta ronda não existia **nenhum** código de habitantes. `grep -rli
+"npc|agent|resident|habitante|population"` sobre `src/` devolvia zero
+ocorrências de agentes: nada escondido, nada por montar, nada atrás de uma flag
+falsa, nada a falhar a importação. A população simplesmente nunca foi escrita.
+O que já existia — e que é reutilizado em vez de reinventado — era a rede
+pedonal (`src/lib/3d/circulation.ts`) e o padrão de animação por `useFrame`.
+
+### 19.2 O que foi construído
+
+| Ficheiro | Papel |
+| --- | --- |
+| `src/lib/3d/residents.ts` | Simulação pura: grafo pedonal, criação, estados, rotas, encontros. Sem three.js, sem React. |
+| `src/lib/3d/resident-skeleton.ts` | Esqueleto: onde assenta cada peça do corpo. Fonte única para o renderer e para o rasterizador. |
+| `src/lib/3d/resident-store.ts` | Estatísticas ao vivo, 4 Hz, fora do ciclo de render. |
+| `src/components/three/site/Residents.tsx` | Renderer: 10 `InstancedMesh`, matrizes escritas por frame. |
+| `src/components/viewer/ResidentsPanel.tsx` | HUD de diagnóstico dentro do visualizador. |
+| `scripts/render-residents.ts` | Rasterizador offline das mesmas transformações (sem browser). |
+| `tests/residents.test.ts`, `tests/resident-body.test.ts` | 33 testes: movimento, conversas, colocação, anatomia, escala, instâncias. |
+
+### 19.3 Criação e integração
+
+`buildResidentWorld()` deriva o grafo de `footpaths()` — os nós são os pontos
+reais das faixas, as arestas são segmentos consecutivos mais uniões até
+`PATH.joinRadius` (1,2 m). **Os trilhos `spur` para as portas são excluídos**:
+atravessam o jardim privado de cada casa, e um residente não entra num lote
+alheio. O grupo "à porta" fica no caminho público mais próximo da entrada
+(`entranceFor`).
+
+`createResidentSim()` cria 20 pessoas: 6 a passear, 4 em dois pares de conversa,
+3 junto às entradas, 3 em lazer, 2 acompanhadas, 2 independentes — sobreposições
+resolvidas por espaçamento mínimo no arranque. Cada pessoa tem altura
+(1,60–1,93 m), compleição, pele, cabelo, camisa e calças próprios.
+
+O ciclo é `Idle → Walking → Pausing → Interacting → Walking`. A velocidade é
+acelerada e travada (`accel` 1,7 / `decel` 2,9 m/s²), a rotação é limitada a
+3,4 rad/s, o corpo vira para onde caminha, e há travagem quando outro corpo entra
+no espaço pessoal (0,62 m). Um `dt` gigante (aba em segundo plano) é limitado a
+0,1 s, pelo que ninguém salta.
+
+`<Residents count={20} />` é montado em `SiteScene`, entre `Boundary` e as
+`Plot` — dentro do grafo R3F que já existia, sem página de demonstração, sem
+galeria, sem cena alternativa.
+
+### 19.4 Conversas
+
+Os quatro residentes de conversa têm par fixo (`buddy`). Cada reencontro escolhe
+o **nó mais próximo do ponto médio** entre os dois e dá a cada um um lugar a
+±0,58 m ao longo da tangente da faixa, para chegarem de frente um para o outro.
+Ao chegar, esperam; quando ambos esperam, começa a conversa (9–24 s), com gestos
+alternados nos braços. Depois retomam o passeio e voltam a encontrar-se. Se um
+par não se encontrar em 60 s, o encontro é abandonado — esperar nunca é
+permanente.
+
+### 19.5 Diagnóstico
+
+Botão **Residents** no visualizador (junto a Perf) abre um HUD com: criados,
+adicionados à cena, visíveis no frustum, a caminhar, parados, a conversar,
+conversas iniciadas/terminadas, falhas de navegação, estado da simulação, e o
+residente selecionado — posição, estado, atividade, destino (nó e coordenadas) e
+metros percorridos. Clicar num corpo seleciona-o; as setas ← → percorrem a
+população; o ícone de reciclagem regenera; o de pausa suspende. A seleção é
+desenhada com um anel no chão.
+
+O HUD lê um snapshot publicado a 4 Hz por `useSyncExternalStore`. **Não há
+`setState` por frame**, nem criação de geometria, material ou cor durante o
+render.
+
+### 19.6 Verificação
+
+| Porta | Resultado |
+| --- | --- |
+| `tsc --noEmit` | limpo |
+| `npx vitest run` | **304/304** (19 ficheiros; 33 novos) |
+| `npm run audit:3d` | 0 critical / 0 high / 1 medium (H13, pré-existente) / 0 low |
+| `npm run lint` | sem erros; só avisos pré-existentes |
+| servidor | `/`, `/properties`, `/login` a 200 |
+| chunk servido ao browser | `/_next/static/chunks/app/page.js` contém o código dos residentes |
+
+Os testes provam, com a simulação real a correr minutos de tempo simulado:
+- todos os 20 nascem **sobre a rede pedonal** (a menos de 0,3 m de uma aresta) e
+  **fora de qualquer lote privado** — verificado em cada passo de 900 passos;
+- todos se deslocam (> 3 m em 240 s cada) e nenhum sai da rede;
+- ~2 conversas começam **e terminam** em 300 s; os pares ficam a 0,7–2,2 m,
+  virados um para o outro (erro de orientação < 0,4 rad), com gestos;
+- as pausas expiram: ninguém fica parado mais de um minuto fora de conversa;
+- a mesma semente dá o mesmo resultado; sementes diferentes dão posições
+  diferentes;
+- o corpo tem 18 peças, 1,60–1,93 m do chão ao topo da cabeça, cabeça a 1/7–1/8
+  da altura, pés no chão, joelhos entre a anca e o tornozelo, nariz e olhos na
+  face;
+- `navFailures === 0`.
+
+### 19.7 Imagens
+
+`docs/residents-overview.png` (20 pessoas sobre a rede, escala do loteamento),
+`docs/residents-closeup.png` (um par a conversar, com postes de referência de
+1,78 m e 2,70 m) e `docs/residents-head.png` (o rosto: olhos, nariz, cabelo —
+geometria estática; **não há expressões faciais**).
+
+`npx tsx scripts/render-residents.ts` regenera as três.
+
+### 19.8 Limites honestos
+
+- **Sem verificação em WebGL.** Não há Chromium neste ambiente (o CDN do
+  Playwright está bloqueado: `ECONNRESET`). As imagens vêm de um rasterizador
+  CPU que aplica **as mesmas** transformações de `resident-skeleton.ts`; não são
+  capturas do browser. O que está provado é colocação, escala, articulação,
+  cores e comportamento; o que **não** está provado é o trajeto WebGL, as sombras
+  e o aspeto final no ecrã do visitante.
+- **Sem expressões faciais, sem roupa articulada, sem cabelo animado.** Os corpos
+  são formas primitivas compostas; a variedade vem de proporções e cores.
+- **Nenhum modelo externo é carregado.** Os corpos são geometria gerada no
+  repositório; por isso o canal de "model-load errors" do HUD está vazio por
+  construção, não por omissão.
+- **Sem colisão física com os carros**, apenas com os edifícios (os lotes estão
+  excluídos da rede) e com os outros corpos (travagem).
+- **H13 continua a ser atravessada** pelo anel exterior (`path/ring-outer`), um
+  achado médio pré-existente. A rede é usada tal como está; não foi corrigida em
+  silêncio.

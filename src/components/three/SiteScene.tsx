@@ -12,6 +12,7 @@ import { Lagoon } from "./site/Lagoon";
 import { Boundary } from "./site/Boundary";
 import { Exposure, Lighting, Moon, StreetLamps, SUN_POSITION, THEMES, type TimeOfDay } from "./site/environment";
 import { Plot } from "./site/Plot";
+import { Residents } from "./site/Residents";
 import type { SceneEntry } from "./site/types";
 import { garagePlan, plotFootprints, plotRearDepth, poolFor, SITE } from "@/lib/3d/site";
 
@@ -29,6 +30,7 @@ export type { TimeOfDay } from "./site/environment";
  *   site/Landscape    planting beds, trees, shrubs, flowers
  *   site/Plot         walls, carport, cars, pool, furniture (merged meshes)
  *   site/Lagoon       lagoon deck, water, pavilion, sun loungers
+ *   site/Residents    the people who live here: 20 articulated figures on the footpaths
  *   site/Boundary     perimeter wall and gate
  *   site/environment  day/night themes, sun rig, street lamps
  */
@@ -42,6 +44,8 @@ export interface SiteSceneProps {
   /** Day/night presentation. Defaults to day. */
   timeOfDay?: TimeOfDay;
   assetIndex?: Record<string, unknown>;
+  /** How many residents to populate the site with. Defaults to 20. */
+  residents?: number;
   onSelect: (id: string) => void;
   onHover: (id: string | null) => void;
 }
@@ -54,6 +58,7 @@ export function SiteScene({
   visibleIds,
   lowQuality,
   timeOfDay = "day",
+  residents = 20,
   onSelect,
   onHover,
 }: SiteSceneProps) {
@@ -122,6 +127,7 @@ export function SiteScene({
       <Lagoon night={night} lowQuality={lowQuality} />
       <SportsPark night={night} lowQuality={lowQuality} />
       <Boundary />
+      <Residents count={residents} />
 
       {entries.map((entry, index) => (
         <Plot
