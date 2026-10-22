@@ -16,9 +16,11 @@
  * than of a remembered description.
  */
 import { deflateSync } from "node:zlib";
-import { writeFileSync, existsSync } from "node:fs";
+import { writeFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { execSync } from "node:child_process";
-import { resolve } from "node:path";
+import { resolve, join } from "node:path";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import * as THREE from "three";
 import { getFloorPlan } from "../src/lib/domain/floorplans";
 import { HOUSE_CONFIG, buildHouseGeometry, type HouseGeometrySet } from "../src/components/three/house-geometry";
@@ -243,15 +245,33 @@ function writePng(path: string, w: number, h: number, buf: Uint8Array): void {
 
 type Builder = (typology: string) => HouseGeometrySet;
 
+/**
+ * The previous builder, pulled from git at run time.
+ *
+ * The temporary module is written into `scripts/.cache/` and imported through a
+ * URL computed at run time (and `webpackIgnore`), because a literal specifier in
+ * the source makes the bundler try to resolve a file that only exists while the
+ * script runs — which is exactly how a dev server ends up failing to compile.
+ */
+function beforeRevision(explicit?: string): string {
+  if (explicit && /^[\w.~^-]+$/.test(explicit)) return explicit;
+  return process.env.HAVEN_BEFORE_REV ?? "HEAD~1";
+}
+
+function writeBeforeModule(sourcePath: string, moduleName: string, revision?: string): string {
+  const dir = path.join("scripts", ".cache");
+  mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${moduleName}.ts`);
+  writeFileSync(file, execSync(`git show ${beforeRevision(revision)}:${sourcePath}`, { encoding: "utf8" }));
+  return file;
+}
+
 async function beforeBuilder(): Promise<Builder | null> {
-  // Pull the previous builder out of git so the comparison is real code.
-  const path = "src/components/three/house-geometry.__before.ts";
-  if (existsSync(path)) return null;
   try {
-    const source = execSync("git show HEAD:src/components/three/house-geometry.ts", { encoding: "utf8" });
-    writeFileSync(path, source);
-    const modulePath = "../src/components/three/house-geometry.__before";
-    const module = (await import(/* @vite-ignore */ modulePath)) as {
+    // argv[2] is the output image; the git revision, when given, is argv[3].
+    const file = writeBeforeModule("src/components/three/house-geometry.ts", "house-geometry-before", process.argv[3]);
+    // Computed at run time: the bundler never sees a path it can try to resolve.
+    const module = (await import(/* webpackIgnore: true */ pathToFileURL(resolve(file)).href)) as {
       buildHouseGeometry: (plan: ReturnType<typeof getFloorPlan>, config: unknown, seed: number) => HouseGeometrySet;
       HOUSE_CONFIG: typeof HOUSE_CONFIG;
     };
@@ -313,8 +333,8 @@ async function main() {
     console.log("wrote", target, `${W} x ${H}`, before ? "(before | after)" : "(after only)");
   }
 
-  const temp = "src/components/three/house-geometry.__before.ts";
-  if (existsSync(temp)) execSync(`rm ${temp}`);
+  const cache = join("scripts", ".cache");
+  if (existsSync(cache)) rmSync(cache, { recursive: true, force: true });
 }
 
 void main();

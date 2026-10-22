@@ -3,7 +3,10 @@
  *   npx tsx scripts/measure-houses.ts
  */
 import { execSync } from "node:child_process";
-import { writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import type { BufferGeometry } from "three";
 import { getFloorPlan } from "../src/lib/domain/floorplans";
 import { HOUSE_CONFIG, buildHouseGeometry } from "../src/components/three/house-geometry";
@@ -21,6 +24,27 @@ function cost(set: Record<string, BufferGeometry | undefined>) {
   return { calls, tris: Math.round(tris) };
 }
 
+/**
+ * The previous builder, pulled from git at run time.
+ *
+ * The temporary module is written into `scripts/.cache/` and imported through a
+ * URL computed at run time (and `webpackIgnore`), because a literal specifier in
+ * the source makes the bundler try to resolve a file that only exists while the
+ * script runs — which is exactly how a dev server ends up failing to compile.
+ */
+function beforeRevision(explicit?: string): string {
+  if (explicit && /^[\w.~^-]+$/.test(explicit)) return explicit;
+  return process.env.HAVEN_BEFORE_REV ?? "HEAD~1";
+}
+
+function writeBeforeModule(sourcePath: string, moduleName: string, revision?: string): string {
+  const dir = path.join("scripts", ".cache");
+  mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${moduleName}.ts`);
+  writeFileSync(file, execSync(`git show ${beforeRevision(revision)}:${sourcePath}`, { encoding: "utf8" }));
+  return file;
+}
+
 async function main() {
   const lines: string[] = [];
   let callsAfter = 0;
@@ -32,10 +56,8 @@ async function main() {
     lines.push(`after  ${t}: ${c.calls} draw calls, ${c.tris} triangles`);
   }
 
-  const path = "src/components/three/hg-before-measure.ts";
-  writeFileSync(path, execSync("git show HEAD:src/components/three/house-geometry.ts", { encoding: "utf8" }));
-  const modulePath = "../src/components/three/hg-before-measure";
-  const mod = (await import(/* @vite-ignore */ modulePath)) as unknown as {
+  const file = writeBeforeModule("src/components/three/house-geometry.ts", "house-geometry-before", process.argv[2]);
+  const mod = (await import(/* webpackIgnore: true */ pathToFileURL(resolve(file)).href)) as unknown as {
     buildHouseGeometry: typeof buildHouseGeometry;
     HOUSE_CONFIG: typeof HOUSE_CONFIG;
   };
@@ -47,8 +69,7 @@ async function main() {
     trisBefore += c.tris;
     lines.push(`before ${t}: ${c.calls} draw calls, ${c.tris} triangles`);
   }
-  rmSync(path, { force: true });
-
+  rmSync("scripts/.cache", { recursive: true, force: true });
   lines.push("");
   lines.push(`total after : ${callsAfter} draw calls, ${trisAfter} triangles (4 prototypes)`);
   lines.push(`total before: ${callsBefore} draw calls, ${trisBefore} triangles`);
