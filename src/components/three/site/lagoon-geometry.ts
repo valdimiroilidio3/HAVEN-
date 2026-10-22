@@ -48,3 +48,85 @@ export function lagoonGeometryStats(): { variants: number; drawCalls: number; tr
   }
   return { variants: cache.size, drawCalls, triangles };
 }
+
+/**
+ * Paving with a hole where the water is.
+ *
+ * The lagoon is an ellipse of water inside an elliptical deck. Drawn as a filled
+ * `CircleGeometry` the deck renders *over* the water — it sits 6 cm higher — and
+ * the basin disappears behind a stone disc. These helpers build the paved band
+ * as a true elliptical annulus, so the aperture is exactly the water ellipse.
+ *
+ * Both rings are cached: they are created once per scene, never per frame.
+ */
+function ellipticalRingGeometry(
+  outerX: number,
+  outerZ: number,
+  innerX: number,
+  innerZ: number,
+  segments: number,
+): THREE.BufferGeometry {
+  const shape = new THREE.Shape();
+  shape.absellipse(0, 0, outerX, outerZ, 0, Math.PI * 2, false, 0);
+  const hole = new THREE.Path();
+  hole.absellipse(0, 0, innerX, innerZ, 0, Math.PI * 2, true, 0);
+  shape.holes.push(hole);
+  const geometry = new THREE.ShapeGeometry(shape, segments);
+  // Shape space is XY; rotate flat so +Y becomes +Z.
+  geometry.rotateX(-Math.PI / 2);
+  return geometry;
+}
+
+let deckPaving: THREE.BufferGeometry | null = null;
+let deckPavingKey = "";
+let lagoonVerge: THREE.BufferGeometry | null = null;
+let lagoonVergeKey = "";
+
+/** Deck paving: from the water edge out to `deck` metres. */
+export function deckPavingGeometry(input: { radiusX: number; radiusZ: number; deck: number; segments: number }): THREE.BufferGeometry {
+  const key = `${input.radiusX}:${input.radiusZ}:${input.deck}`;
+  if (!deckPaving || deckPavingKey !== key) {
+    deckPaving?.dispose();
+    deckPavingKey = key;
+    deckPaving = ellipticalRingGeometry(
+      input.radiusX + input.deck,
+      input.radiusZ + input.deck,
+      input.radiusX,
+      input.radiusZ,
+      Math.max(24, Math.round(input.segments / 2)),
+    );
+  }
+  return deckPaving;
+}
+
+/** Grass verge around the deck: never a disc, or it would hide the water too. */
+export function lagoonVergeGeometry(input: {
+  radiusX: number;
+  radiusZ: number;
+  deck: number;
+  margin: number;
+  segments: number;
+}): THREE.BufferGeometry {
+  const key = `${input.radiusX}:${input.radiusZ}:${input.deck}:${input.margin}`;
+  if (!lagoonVerge || lagoonVergeKey !== key) {
+    lagoonVerge?.dispose();
+    lagoonVergeKey = key;
+    lagoonVerge = ellipticalRingGeometry(
+      input.radiusX + input.deck + input.margin,
+      input.radiusZ + input.deck + input.margin,
+      input.radiusX + input.deck,
+      input.radiusZ + input.deck,
+      Math.max(24, Math.round(input.segments / 2)),
+    );
+  }
+  return lagoonVerge;
+}
+
+export function disposeLagoonSurfaces(): void {
+  deckPaving?.dispose();
+  deckPaving = null;
+  deckPavingKey = "";
+  lagoonVerge?.dispose();
+  lagoonVerge = null;
+  lagoonVergeKey = "";
+}

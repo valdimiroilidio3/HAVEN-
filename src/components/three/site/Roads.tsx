@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { SITE, drivewayFor, type GarageSpec } from "@/lib/3d/site";
 import { getMaterials } from "../materials";
 import type { SceneEntry } from "./types";
+import { lagoonVergeGeometry } from "./lagoon-geometry";
 
 /**
  * Circulation. The circuit is a rounded-rectangle ring drawn from the same
@@ -92,10 +93,20 @@ export function Roads() {
           <planeGeometry args={[0.16, 1.1]} />
         </mesh>
       ))}
-      {/* low stone kerb ring around the lagoon deck */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[SITE.lagoon.x, 0.03, SITE.lagoon.z]} material={m.lawn} receiveShadow>
-        <circleGeometry args={[SITE.lagoon.radiusX + SITE.lagoon.deck + 2.4, 64]} />
-      </mesh>
+      {/* Grass verge around the lagoon deck. It must be a ring: as a filled
+          circle it covers the water, which sits 1 cm lower. */}
+      <mesh
+        geometry={lagoonVergeGeometry({
+          radiusX: SITE.lagoon.radiusX,
+          radiusZ: SITE.lagoon.radiusZ,
+          deck: SITE.lagoon.deck,
+          margin: 2.4,
+          segments: 64,
+        })}
+        position={[SITE.lagoon.x, 0.03, SITE.lagoon.z]}
+        material={m.lawn}
+        receiveShadow
+      />
     </group>
   );
 }

@@ -513,3 +513,44 @@ screenshot got cleaner and the site got worse.
 **Not verified:** the 3D ribbons have not been seen rendered — there is no GPU
 in this environment. The geometry is checked numerically (closed rings, no
 samples inside houses, widths, joins), not visually.
+
+## 14. The lagoon had no water
+
+Reported from the live viewer: *"put water in the middle of the lagoon"*. The water
+was there in data (`LAGOON_WATER`, y = 0.02, basin at −0.62) and in the plan, but
+invisible in 3D, because two opaque layers sat above it:
+
+| Mesh | Height | Shape |
+| --- | --- | --- |
+| Water | y = 0.02 | ellipse 16 × 10.2 |
+| Grass verge (`Roads.tsx`) | y = 0.03 | **filled circle**, r = 23.4 |
+| Deck paving (`Lagoon.tsx`) | y = 0.08 | **filled ellipse**, 21 × 15.2 |
+
+Both were drawn as complete discs, so the lagoon rendered as a stone plate with a
+green collar. Depth testing did the rest — no water, at any quality setting.
+
+**Fix at the cause, not by nudging heights.** Paving is an annulus whose aperture
+*is* the water ellipse:
+
+- `deckPavingGeometry()` — elliptical ring from `(rx + deck, rz + deck)` down to `(rx, rz)`.
+- `lagoonVergeGeometry()` — elliptical ring from the deck edge out to `+margin`.
+
+A uniform `RingGeometry` scaled per axis would not work: it gives an annulus of
+*proportional* thickness (5 m on X becomes 3.6 m on Z) and the aperture stops
+matching the water on the short axis. A `THREE.Shape` with an elliptical hole is
+exact.
+
+**Verified without a GPU.** `tests/lagoon-surface.test.ts` casts rays straight down
+through the three surfaces:
+
+```
+topSurfaceY(0, 0)              → 0.02  water
+topSurfaceY(±0.8·rx, ±0.8·rz)  → 0.02  water, all over the basin
+topSurfaceY(rx + deck/2, 0)    → 0.08  stone on the deck band
+topSurfaceY(rx + deck + 1.2,0) → 0.03  grass on the verge
+topSurfaceY(rx ± 0.2, 0)       → 0.02 / 0.08  aperture exactly at the rim
+```
+
+Data untouched: `lagoon: 134 parts → 11 draw calls`, findings still 0/0/1/0, and
+the lagoon rules (`insideDeckEllipse`, `onDeckRing`) are unchanged. What changed
+is only how the paved band is triangulated.

@@ -7,7 +7,7 @@ import type { PartMaterial } from "@/lib/3d/parts";
 import { LAGOON_WATER, lagoonLayout, onDeckRing } from "@/lib/3d/lagoon";
 import { POOL_COLORS } from "../vegetation";
 import { getMaterials } from "../materials";
-import { buildLagoonGeometries } from "./lagoon-geometry";
+import { buildLagoonGeometries, deckPavingGeometry } from "./lagoon-geometry";
 
 /**
  * The condominium lagoon.
@@ -136,10 +136,9 @@ export function Lagoon({ night, lowQuality }: { night: boolean; lowQuality: bool
 
   return (
     <group position={[x, 0, z]}>
-      {/* Paving: the deck, a darker wet band at the water line, then the coping. */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.08, 0]} scale={[radiusX + deck, radiusZ + deck, 1]} material={m.stone} receiveShadow>
-        <circleGeometry args={[1, layout.segments]} />
-      </mesh>
+      {/* Paving is an annulus, not a disc: the aperture is the water. A filled
+          circle here sits 6 cm above the surface and hides the entire basin. */}
+      <mesh geometry={deckPavingGeometry({ radiusX, radiusZ, deck, segments: layout.segments })} position={[0, 0.08, 0]} material={m.stone} receiveShadow />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.085, 0]} scale={[radiusX, radiusZ, 1]} material={m.concrete} receiveShadow>
         <ringGeometry args={[1, 1.05, layout.segments]} />
       </mesh>
