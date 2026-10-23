@@ -23,6 +23,7 @@ import { getFloorPlan } from "../src/lib/domain/floorplans";
 import { HOUSE_CONFIG, buildHouseGeometry, type HouseGeometrySet } from "../src/components/three/house-geometry";
 import { buildPlotGeometries } from "../src/components/three/site/plot-geometry";
 import { buildLagoonGeometries } from "../src/components/three/site/lagoon-geometry";
+import { LAGOON_WATER } from "../src/lib/3d/lagoon";
 import { garagePlan, plotRearDepth, plotWallsFor, poolFor } from "../src/lib/3d/site";
 import {
   RESIDENTS,
@@ -392,10 +393,43 @@ function drawPlots(frame: Frame): void {
   }
 }
 
-/** The pool, deck and pavilion at the middle of the condominium. */
+/**
+ * The pool, deck and pavilion at the middle of the condominium.
+ *
+ * The water itself is a separate mesh in `Lagoon.tsx` (a scaled circle), not
+ * part of the merged set, so it is drawn here as an ellipse — otherwise the
+ * central garden reads as a green hole.
+ */
 function drawLagoon(frame: Frame): void {
   const { geometries } = buildLagoonGeometries({ lowQuality: true });
+  // The merged set is in the lagoon's local frame (the scene wraps it in a group
+  // at SITE.lagoon), so it is placed the same way here.
   drawSet(frame, geometries, PLOT_COLOURS, [0.7, 0.72, 0.7], SITE.lagoon.x, SITE.lagoon.z, 0);
+}
+
+/**
+ * The water surface, drawn last.
+ *
+ * The real material is transparent and the pool has a lighter shelf under the
+ * rim that shows through it; this rasteriser has no alpha, so the shelf reads as
+ * pale patches inside the water. That is a limitation of the offline render, not
+ * of the scene.
+ */
+function drawWater(frame: Frame): void {
+  const { x, z, radiusX, radiusZ } = SITE.lagoon;
+  const segments = 48;
+  const water: Vec3 = [0.16, 0.38, 0.42];
+  for (let i = 0; i < segments; i += 1) {
+    const a0 = (i / segments) * Math.PI * 2;
+    const a1 = ((i + 1) / segments) * Math.PI * 2;
+    triangle(
+      frame,
+      [x, LAGOON_WATER.y + 0.03, z],
+      [x + Math.cos(a1) * radiusX, LAGOON_WATER.y + 0.03, z + Math.sin(a1) * radiusZ],
+      [x + Math.cos(a0) * radiusX, LAGOON_WATER.y + 0.03, z + Math.sin(a0) * radiusZ],
+      water,
+    );
+  }
 }
 
 function drawResidents(frame: Frame, only?: typeof sim.residents): void {
@@ -554,6 +588,7 @@ drawPlots(overview);
 drawHouses(overview);
 drawScaleReferences(overview);
 drawResidents(overview);
+drawWater(overview);
 writePng("docs/residents-overview.png", overview);
 
 // 1b. A three-quarter view over the houses and the people together: the same
@@ -570,6 +605,7 @@ drawLagoon(quarter);
 drawPlots(quarter);
 drawHouses(quarter);
 drawResidents(quarter);
+drawWater(quarter);
 writePng("docs/site-three-quarter.png", quarter);
 
 // 1c. One residence and its plot, close enough to judge walls, carport, pool,

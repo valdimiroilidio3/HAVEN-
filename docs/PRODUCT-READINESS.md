@@ -66,6 +66,7 @@ npm run build                                # produção
 | Orçamento: 213 draw calls nos lotes, 49 608 triângulos, 54 árvores, 307 flores | **A** | `audit:3d` |
 | Um caminho pedonal atravessa o lote H13 (`path/ring-outer`) | **C** | achado **médio** pré-existente, não corrigido em silêncio |
 | Casas com telhado, beiral, rufo, peitoril e embasamento coerentes | **B** | `docs/houses-before-after-three-quarter.png`, `docs/site-house.png` |
+| Conjunto implantação + lotes + piscina + pessoas numa só vista | **B** | `docs/residents-overview.png`, `docs/site-three-quarter.png` (rasterizador CPU, geometria real) |
 | Cena WebGL no ecrã (sombras, materiais, exposição) | **E** | sem GPU no ambiente |
 
 ## 4. População e vida autónoma
@@ -110,7 +111,18 @@ npm run build                                # produção
    `rotationY` em graus (as casas convertem); os habitantes recebiam o valor
    cru. Corrigido no componente e nos scripts.
 
-## 8. Problemas conhecidos e não resolvidos
+## 8. Nota sobre as imagens
+
+As vistas de conjunto (`residents-overview.png`, `site-three-quarter.png`,
+`site-house.png`) são geradas por `scripts/render-residents.ts`, que agora
+desenha **a geometria real** das casas (`buildHouseGeometry`), dos lotes
+(`buildPlotGeometries`) e da piscina central (`buildLagoonGeometries`), com os
+habitantes por cima. O rasterizador não tem transparência nem sombras: a água é
+opaca, pelo que o fundo mais claro da piscina aparece como manchas pálidas — no
+produto o material é transparente. Isto é uma limitação da prova offline, não um
+defeito da cena.
+
+## 9. Problemas conhecidos e não resolvidos
 
 - `path/ring-outer` atravessa o lote H13 — achado médio do `audit:3d`.
 - Trânsito automóvel em movimento: **não implementado** (os carros estão
