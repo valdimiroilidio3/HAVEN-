@@ -8,6 +8,8 @@
  * panel is open.
  */
 
+import { createResidentSim, type ResidentSim, type ResidentWorld } from "./residents";
+
 export interface ResidentSample {
   id: string;
   state: string;
@@ -23,10 +25,10 @@ export interface ResidentSample {
 export interface ResidentSnapshot {
   /** Bodies the simulation created. */
   created: number;
-  /** Bodies written to the GPU this frame (all of them, every frame). */
-  added: number;
-  /** Bodies inside the camera frustum. */
-  visible: number;
+  /** Instances written into the GPU buffers this frame (22 per body). */
+  instances: number;
+  /** Bodies whose centre is inside the current camera frustum. */
+  inFrustum: number;
   walking: number;
   pausing: number;
   interacting: number;
@@ -34,8 +36,14 @@ export interface ResidentSnapshot {
   conversationsStarted: number;
   conversationsEnded: number;
   navFailures: number;
+  /** Meetings that could not be planned because the network is split there. */
+  unreachableMeetings: number;
+  /** Walkers pulled out of a jam (should be rare, never permanent). */
+  stuckRecoveries: number;
   /** Anything that stopped residents from being drawn. */
   errors: string[];
+  /** Draw calls for the whole scene this frame, as context for the cost. */
+  sceneDrawCalls: number;
   selected: ResidentSample | null;
   /** Up to four residents, for the "who is where" list. */
   sample: ResidentSample[];
@@ -45,8 +53,8 @@ export interface ResidentSnapshot {
 
 const EMPTY: ResidentSnapshot = {
   created: 0,
-  added: 0,
-  visible: 0,
+  instances: 0,
+  inFrustum: 0,
   walking: 0,
   pausing: 0,
   interacting: 0,
@@ -54,7 +62,10 @@ const EMPTY: ResidentSnapshot = {
   conversationsStarted: 0,
   conversationsEnded: 0,
   navFailures: 0,
+  unreachableMeetings: 0,
+  stuckRecoveries: 0,
   errors: [],
+  sceneDrawCalls: 0,
   selected: null,
   sample: [],
   running: true,
@@ -98,6 +109,48 @@ export function setResidentSelection(index: number | null): void {
 
 export function getResidentSelection(): number | null {
   return selection;
+}
+
+/* ------------------------------------------------------------------ *
+ * The population session
+ * ------------------------------------------------------------------ */
+
+/**
+ * One simulation for the whole browser session.
+ *
+ * It used to live inside the React component, so any remount — a WebGL
+ * recovery, a route change, StrictMode in development — silently reset everyone
+ * to their spawn points. The session outlives the component: leaving and coming
+ * back finds the same people where they were.
+ */
+interface ResidentSession {
+  sim: ResidentSim;
+  world: ResidentWorld;
+  count: number;
+}
+
+let session: ResidentSession | null = null;
+let running = true;
+
+export function acquireResidentSession(world: ResidentWorld, count: number, seed: number): { sim: ResidentSim; reused: boolean } {
+  if (session && session.world === world && session.count === count) {
+    return { sim: session.sim, reused: true };
+  }
+  session = { sim: createResidentSim(world, { count, seed }), world, count };
+  return { sim: session.sim, reused: false };
+}
+
+/** Throw the population away and build a new one (the regenerate control). */
+export function resetResidentSession(): void {
+  session = null;
+}
+
+export function setResidentRunning(next: boolean): void {
+  running = next;
+}
+
+export function isResidentRunning(): boolean {
+  return running;
 }
 
 export interface ResidentControls {

@@ -52,6 +52,8 @@ export const RESIDENTS = {
   turnRate: 3.4,
   /** Personal space used for the standoff between two walkers. */
   personalSpace: 0.62,
+  /** Two bodies may never be closer than this, centres. */
+  minSeparation: 0.46,
   /** Half the gap between two people in conversation. */
   talkGap: 0.58,
   conversation: { min: 9, max: 24, /** Give up waiting for a partner after this. */ rendezvous: 60 },
@@ -78,6 +80,10 @@ export interface ResidentStyle {
   hair: number;
   shirt: number;
   trousers: number;
+  /** Gait amplitude: how far this person swings arms and legs. */
+  gait: number;
+  /** 0 = short, 1 = long, 2 = bald. Geometry only. */
+  hairStyle: number;
 }
 
 export interface Resident {
@@ -101,6 +107,14 @@ export interface Resident {
   routeIndex: number;
   /** Final point of the route, when it is not a node (conversation spot). */
   spot: { x: number; z: number } | null;
+  /** The node the current rendezvous is aimed at, for re-routing. */
+  meetingNode: number | null;
+  /**
+   * Connected component this resident walks. Near the break in the outer walk,
+   * two nodes can be metres apart and still not be connected, so proximity alone
+   * does not tell you which side of the seam someone is on.
+   */
+  homeComponent: number;
   /** Conversation partner, by index. Fixed pairing, kept between meetings. */
   buddy: number | null;
   /** Partner for the conversation in progress, by index. */
@@ -116,6 +130,11 @@ export interface Resident {
   travelled: number;
   /** Seconds spent in the current state. */
   stateAge: number;
+  /** Seconds since the last progress check. */
+  stuckFor: number;
+  /** Where the body was at the last progress check. */
+  stuckX: number;
+  stuckZ: number;
   /** Node the resident is walking away from (for route continuity). */
   fromNode: number;
   /** Set once the simulation moved them off the network; must stay 0. */
@@ -140,6 +159,10 @@ export interface ResidentWorld {
   doorApproach: Array<{ code: string; node: number; toDoor: number }>;
   /** Every node is on a footpath; this records the narrowest one it serves. */
   maxNodeGap: number;
+  /** Connected component of each node. Meetings only happen inside one. */
+  component: number[];
+  /** Size of each connected component, one entry per component. */
+  componentSizes: number[];
 }
 
 export interface ResidentSim {
@@ -149,6 +172,10 @@ export interface ResidentSim {
   seed: number;
   /** Conversation bookkeeping, surfaced by the debug panel. */
   conversations: { started: number; ended: number };
+  /** Meetings cancelled because the two people are on different parts of the network. */
+  unreachableMeetings: number;
+  /** Times a stuck walker was re-routed. Must stay at zero in normal running. */
+  stuckRecoveries: number;
   /** Non-zero means a resident left the walkable network: a real bug. */
   navFailures: number;
 }
@@ -265,7 +292,55 @@ export function buildResidentWorld(entries: ResidentEntry[]): ResidentWorld {
     }
   });
 
-  return { nodes, adjacency, byKind, doorApproach, maxNodeGap };
+  // Connected components: the network is not guaranteed to be one piece — the
+  // outer walk is split where it crosses a plot — so pairs must be chosen inside
+  // a component, not across it.
+  const component = new Array<number>(nodes.length).fill(-1);
+  const componentSizes: number[] = [];
+  for (let start = 0; start < nodes.length; start += 1) {
+    if (component[start] !== -1) continue;
+    const id = componentSizes.length;
+    const stack = [start];
+    component[start] = id;
+    let size = 0;
+    while (stack.length > 0) {
+      const current = stack.pop()!;
+      size += 1;
+      for (const next of adjacency[current] ?? []) {
+        if (component[next] === -1) {
+          component[next] = id;
+          stack.push(next);
+        }
+      }
+    }
+    componentSizes.push(size);
+  }
+
+  return { nodes, adjacency, byKind, doorApproach, maxNodeGap, component, componentSizes };
+}
+
+/**
+ * The world, shared between mounts.
+ *
+ * `buildResidentWorld` returns a fresh object every call, so a component that
+ * rebuilt it on remount also looked like a different world to the session cache
+ * and the population was silently recreated. Same entries, same world.
+ */
+let sharedWorld: { key: string; world: ResidentWorld } | null = null;
+
+export function residentWorldFor(entries: ResidentEntry[]): ResidentWorld {
+  const key = entries
+    .map((entry) => `${entry.code}|${entry.position.x}|${entry.position.z}|${entry.rotationY}|${entry.typology}`)
+    .join(";");
+  if (sharedWorld && sharedWorld.key === key) return sharedWorld.world;
+  const world = buildResidentWorld(entries);
+  sharedWorld = { key, world };
+  return world;
+}
+
+/** Drops the cached world (tests, and a changed site). */
+export function resetResidentWorld(): void {
+  sharedWorld = null;
 }
 
 /* ------------------------------------------------------------------ *
@@ -285,6 +360,8 @@ function styleFor(random: () => number): ResidentStyle {
     hair: HAIR[Math.floor(random() * HAIR.length)]!,
     shirt: SHIRT[Math.floor(random() * SHIRT.length)]!,
     trousers: TROUSERS[Math.floor(random() * TROUSERS.length)]!,
+    gait: 0.86 + random() * 0.28,
+    hairStyle: random() < 0.62 ? 0 : random() < 0.7 ? 1 : 2,
   };
 }
 
@@ -390,7 +467,10 @@ export function createResidentSim(world: ResidentWorld, options: { count?: numbe
   const entranceNodes = world.doorApproach.map((entry) => entry.node);
 
   const strollSpawns = pickSpawnNodes(world, walkNodes, 12, 6, random);
-  const talkSpawns = pickSpawnNodes(world, nodesOf(world, ["ring", "boulevard"]), 4, 8, random);
+  // Talkers start on a connected walk, so a pair can actually reach its meeting.
+  const connectedWalk = walkNodes.filter((node) => world.component[node] === world.componentSizes.indexOf(Math.max(...world.componentSizes)));
+  const talkPool = connectedWalk.length >= 4 ? connectedWalk : nodesOf(world, ["ring", "boulevard"]);
+  const talkSpawns = pickSpawnNodes(world, talkPool, 4, 8, random);
   const entranceSpawns = pickSpawnNodes(
     world,
     entranceNodes.length > 0 ? entranceNodes : walkNodes,
@@ -399,7 +479,11 @@ export function createResidentSim(world: ResidentWorld, options: { count?: numbe
     random,
   );
   const leisureSpawns = pickSpawnNodes(world, leisureNodes.length > 0 ? leisureNodes : walkNodes, 3, 6, random);
-  const coupleSpawns = pickSpawnNodes(world, walkNodes, 2, 6, random);
+  // Pairs must be able to reach each other, so their spawn nodes come from the
+  // largest connected component of the network.
+  const largest = world.componentSizes.indexOf(Math.max(...world.componentSizes));
+  const connectedNodes = walkNodes.filter((node) => world.component[node] === largest);
+  const coupleSpawns = pickSpawnNodes(world, connectedNodes.length >= 2 ? connectedNodes : walkNodes, 2, 6, random);
   const independentSpawns = pickSpawnNodes(world, walkNodes, 2, 6, random);
 
   const take = (list: number[], index: number): number => list[index % Math.max(1, list.length)] ?? 0;
@@ -427,12 +511,13 @@ export function createResidentSim(world: ResidentWorld, options: { count?: numbe
       z: node.z,
       rotationY: random() * Math.PI * 2,
       speed: 0,
-      cruise: blueprint.cruise,
+      cruise: blueprint.cruise * (0.9 + random() * 0.2),
       state: blueprint.state,
       timer: blueprint.timer,
       route: [],
       routeIndex: 0,
       spot: null,
+      meetingNode: null,
       buddy: null,
       partner: null,
       needsRendezvous: false,
@@ -441,7 +526,11 @@ export function createResidentSim(world: ResidentWorld, options: { count?: numbe
       gesture: random() * Math.PI * 2,
       travelled: 0,
       stateAge: 0,
+      stuckFor: 0,
+      stuckX: 0,
+      stuckZ: 0,
       fromNode: spawn,
+      homeComponent: world.component[spawn] ?? 0,
       navFailures: 0,
     };
   });
@@ -458,7 +547,7 @@ export function createResidentSim(world: ResidentWorld, options: { count?: numbe
     a.buddy = b.index;
     b.buddy = a.index;
     planRendezvous(
-      { world, residents, time: 0, seed, conversations: { started: 0, ended: 0 }, navFailures: 0 },
+      { world, residents, time: 0, seed, conversations: { started: 0, ended: 0 }, unreachableMeetings: 0, stuckRecoveries: 0, navFailures: 0 },
       a,
       b,
       random,
@@ -475,11 +564,21 @@ export function createResidentSim(world: ResidentWorld, options: { count?: numbe
     b.route = [...shared];
     a.routeIndex = 0;
     b.routeIndex = 0;
-    // Start the second walker a step behind: same route, natural stagger.
-    a.x = world.nodes[a.fromNode]!.x;
-    a.z = world.nodes[a.fromNode]!.z;
-    b.x = a.x;
-    b.z = a.z;
+    // Start them a stride apart along the path, and let their walking speeds
+    // differ slightly. Starting both at the same node with the same route left
+    // two people permanently inside each other: they moved as one body.
+    const start = world.nodes[a.fromNode]!;
+    const next = world.nodes[a.route[0] ?? a.fromNode] ?? start;
+    const length = Math.hypot(next.x - start.x, next.z - start.z) || 1;
+    const ux = (next.x - start.x) / length;
+    const uz = (next.z - start.z) / length;
+    a.x = start.x;
+    a.z = start.z;
+    b.x = a.x - ux * 0.85;
+    b.z = a.z - uz * 0.85;
+    b.rotationY = a.rotationY;
+    a.cruise *= 1.04;
+    b.cruise *= 0.94;
     b.state = "walking";
     a.state = "walking";
   }
@@ -501,6 +600,8 @@ export function createResidentSim(world: ResidentWorld, options: { count?: numbe
     time: 0,
     seed,
     conversations: { started: 0, ended: 0 },
+    unreachableMeetings: 0,
+    stuckRecoveries: 0,
     navFailures: 0,
   };
 }
@@ -521,7 +622,7 @@ function pathTangent(world: ResidentWorld, node: number): { x: number; z: number
 }
 
 /** Shortest node path between two nodes, so a pair can come together. */
-function routeTo(world: ResidentWorld, from: number, to: number, random: () => number): number[] {
+function routeTo(world: ResidentWorld, from: number, to: number): number[] {
   if (from === to) return [];
   const previous = new Map<number, number>();
   const queue = [from];
@@ -536,17 +637,23 @@ function routeTo(world: ResidentWorld, from: number, to: number, random: () => n
     }
   }
   if (!previous.has(to)) {
-    // Unreachable on the network: fall back to a short wander rather than
-    // teleporting or standing still forever.
-    return routeFrom(world, from, 4, random);
+    // Unreachable. Returning a wander here used to look like a route and left
+    // people walking to a rendezvous they could never reach; the caller has to
+    // know, so the answer is empty.
+    return [];
   }
+  // Reconstruct from the destination back to the origin, and stop at the
+  // origin: the previous version walked back to the root and then shifted the
+  // first entry, so a destination *adjacent* to the origin produced an empty
+  // route — and every meeting between neighbours was cancelled as unreachable.
   const route: number[] = [];
-  let step = previous.get(to)!;
-  while (step !== -1) {
+  let step = to;
+  while (step !== from) {
     route.unshift(step);
-    step = previous.get(step)!;
+    const parent = previous.get(step);
+    if (parent === undefined) return [];
+    step = parent;
   }
-  route.shift(); // `from` itself
   return route;
 }
 
@@ -559,18 +666,75 @@ function routeTo(world: ResidentWorld, from: number, to: number, random: () => n
  * away, and the rendezvous timed out.
  */
 function planRendezvous(sim: ResidentSim, a: Resident, b: Resident, random: () => number): void {
+  const world = sim.world;
+  const fromA = nearestNodeIn(world, a.x, a.z, a.homeComponent);
+  if (a.homeComponent !== b.homeComponent) {
+    // The two stand on parts of the network that do not connect. There is no
+    // honest meeting point, so do not invent one: record it and drop the plan.
+    sim.unreachableMeetings += 1;
+    for (const resident of [a, b]) {
+      resident.partner = null;
+      resident.spot = null;
+      resident.meetingNode = null;
+      resident.needsRendezvous = false;
+      if (resident.state === "walking") {
+        resident.route = routeFrom(world, nearestNode(world, resident.x, resident.z), 5, random);
+        resident.routeIndex = 0;
+      }
+    }
+    return;
+  }
+  const component = a.homeComponent;
   const midpoint = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 };
-  const meeting = nearestNode(sim.world, midpoint.x, midpoint.z);
-  const anchor = sim.world.nodes[meeting] ?? { x: midpoint.x, z: midpoint.z };
-  const tangent = pathTangent(sim.world, meeting);
+  let meeting = fromA;
+  let best = Number.POSITIVE_INFINITY;
+  world.nodes.forEach((node, index) => {
+    if (world.component[index] !== component) return;
+    const distance = (node.x - midpoint.x) ** 2 + (node.z - midpoint.z) ** 2;
+    if (distance < best) {
+      best = distance;
+      meeting = index;
+    }
+  });
+  const anchor = world.nodes[meeting] ?? { x: midpoint.x, z: midpoint.z };
+  const tangent = pathTangent(world, meeting);
+
+  // Work out both routes before touching either resident: a plan that fails for
+  // one of them must not leave the other half-booked.
+  const members: Array<{ resident: Resident; sign: 1 | -1; route: number[]; fromNode: number }> = [];
   for (const [resident, sign] of [[a, 1], [b, -1]] as const) {
+    const fromNode = nearestNodeIn(world, resident.x, resident.z, resident.homeComponent);
+    // An empty route is valid only when the person is already standing on the
+    // meeting node. Treating that as "unreachable" cancelled every rendezvous
+    // whose midpoint happened to be one of their own nodes.
+    const route = fromNode === meeting ? [] : routeTo(world, fromNode, meeting);
+    if (fromNode !== meeting && route.length === 0) {
+      sim.unreachableMeetings += 1;
+      for (const one of [a, b]) {
+        one.partner = null;
+        one.spot = null;
+        one.meetingNode = null;
+        one.needsRendezvous = false;
+        if (one.state === "walking" && one.route.length === 0) {
+          one.route = routeFrom(world, nearestNode(world, one.x, one.z), 5, random);
+          one.routeIndex = 0;
+        }
+      }
+      return;
+    }
+    members.push({ resident, sign, route, fromNode });
+  }
+
+  for (const { resident, sign, route, fromNode } of members) {
     resident.partner = sign === 1 ? b.index : a.index;
+    resident.buddy = resident.partner;
+    resident.meetingNode = meeting;
     resident.spot = {
       x: anchor.x + tangent.x * RESIDENTS.talkGap * sign,
       z: anchor.z + tangent.z * RESIDENTS.talkGap * sign,
     };
-    resident.fromNode = nearestNode(sim.world, resident.x, resident.z);
-    resident.route = routeTo(sim.world, resident.fromNode, meeting, random);
+    resident.fromNode = fromNode;
+    resident.route = route;
     resident.routeIndex = 0;
     resident.state = "walking";
     resident.stateAge = 0;
@@ -610,6 +774,9 @@ function easeSpeed(resident: Resident, target: number, dt: number): void {
 function resumeWalking(sim: ResidentSim, resident: Resident, random: () => number): void {
   resident.state = "walking";
   resident.stateAge = 0;
+  resident.stuckFor = 0;
+  resident.stuckX = resident.x;
+  resident.stuckZ = resident.z;
   resident.fromNode = nearestNode(sim.world, resident.x, resident.z);
   resident.waiting = false;
   if (resident.needsRendezvous && resident.buddy !== null) {
@@ -623,6 +790,20 @@ function resumeWalking(sim: ResidentSim, resident: Resident, random: () => numbe
   resident.route = routeFrom(sim.world, resident.fromNode, 4 + Math.floor(random() * 6), random);
   resident.routeIndex = 0;
   resident.spot = null;
+}
+
+function nearestNodeIn(world: ResidentWorld, x: number, z: number, component: number): number {
+  let best = -1;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  world.nodes.forEach((node, index) => {
+    if (world.component[index] !== component) return;
+    const distance = (node.x - x) ** 2 + (node.z - z) ** 2;
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = index;
+    }
+  });
+  return best >= 0 ? best : nearestNode(world, x, z);
 }
 
 function nearestNode(world: ResidentWorld, x: number, z: number): number {
@@ -662,7 +843,76 @@ export function stepResidentSim(sim: ResidentSim, delta: number, random: () => n
     }
   }
 
+  separateBodies(sim, dt);
   beginConversations(sim);
+}
+
+/**
+ * Keep bodies out of each other.
+ *
+ * Slowing down near someone is not enough: two people following the same route
+ * arrived at the same point and stayed there, one inside the other for the whole
+ * session. This resolves any overlap directly, with a small cap per frame so
+ * nobody is shoved off the footpath.
+ */
+function separateBodies(sim: ResidentSim, dt: number): void {
+  const limit = RESIDENTS.minSeparation;
+  // A small cap keeps the correction from becoming a sideways shove.
+  const cap = 0.9 * dt;
+  for (let i = 0; i < sim.residents.length; i += 1) {
+    for (let j = i + 1; j < sim.residents.length; j += 1) {
+      const a = sim.residents[i]!;
+      const b = sim.residents[j]!;
+      // Conversation partners stand at their own distance on purpose.
+      if (a.partner === b.index && a.state === "interacting" && b.state === "interacting") continue;
+      // A seated/standing pair may share a bench-level gap; walking may not.
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const distance = Math.hypot(dx, dz);
+      if (distance >= limit) continue;
+      const push = Math.min((limit - distance) * 0.5, cap);
+      // Deterministic direction when they are exactly on top of each other.
+      const nx = distance > 1e-4 ? dx / distance : Math.cos(a.index * 1.7);
+      const nz = distance > 1e-4 ? dz / distance : Math.sin(a.index * 1.7);
+      a.x -= nx * push;
+      a.z -= nz * push;
+      b.x += nx * push;
+      b.z += nz * push;
+      leashToNetwork(sim, a);
+      leashToNetwork(sim, b);
+    }
+  }
+}
+
+/**
+ * Pull a walker back toward the segment it is walking when a nudge has moved it
+ * too far off the footpath. Separation may never take someone onto the grass.
+ */
+function leashToNetwork(sim: ResidentSim, resident: Resident): void {
+  if (resident.state !== "walking") return;
+  const target = sim.world.nodes[resident.route[resident.routeIndex] ?? -1] ?? sim.world.nodes[resident.meetingNode ?? -1];
+  if (!target) return;
+  const from = sim.world.nodes[resident.fromNode] ?? target;
+  const dx = target.x - from.x;
+  const dz = target.z - from.z;
+  const lengthSq = dx * dx + dz * dz;
+  // Standing on the node the leash is measured from: there is no segment, and
+  // clamping to a single point would pin the walker in place forever.
+  if (lengthSq < 1e-6) return;
+  const t = Math.max(0, Math.min(1, ((resident.x - from.x) * dx + (resident.z - from.z) * dz) / lengthSq));
+  const px = from.x + dx * t;
+  const pz = from.z + dz * t;
+  const offX = resident.x - px;
+  const offZ = resident.z - pz;
+  const off = Math.hypot(offX, offZ);
+  const maxOff = 1.0;
+  if (off <= maxOff) return;
+  // Pull back gradually: a hard clamp moved the body up to a metre in a single
+  // frame, which read as a teleport.
+  const drift = off - maxOff;
+  const pull = Math.min(drift, 1.6 / 60);
+  resident.x -= (offX / off) * pull;
+  resident.z -= (offZ / off) * pull;
 }
 
 function stepWalking(sim: ResidentSim, resident: Resident, dt: number, random: () => number): void {
@@ -685,7 +935,28 @@ function stepWalking(sim: ResidentSim, resident: Resident, dt: number, random: (
 
   const nodeIndex = resident.route[resident.routeIndex];
   const node = nodeIndex !== undefined ? sim.world.nodes[nodeIndex] : undefined;
+  const routeExhausted = node === undefined && resident.spot !== null;
   const target: { x: number; z: number } | null = node ?? resident.spot;
+
+  if (routeExhausted && resident.meetingNode !== null && Math.hypot(resident.spot!.x - resident.x, resident.spot!.z - resident.z) > 2) {
+    // The route ended somewhere other than the meeting point. Walking straight
+    // at the spot from here would cross gardens and houses — re-route properly.
+    resident.fromNode = nearestNode(sim.world, resident.x, resident.z);
+    resident.route = routeTo(sim.world, resident.fromNode, resident.meetingNode);
+    resident.routeIndex = 0;
+    if (resident.route.length === 0) {
+      // No way through: give up on this meeting rather than walking through walls.
+      resident.spot = null;
+      resident.meetingNode = null;
+      resident.partner = null;
+      resident.needsRendezvous = resident.buddy !== null;
+      resident.state = "pausing";
+      resident.stateAge = 0;
+      resident.timer = RESIDENTS.pause.min;
+      resident.speed = 0;
+    }
+    return;
+  }
 
   if (!target) {
     // End of the route.
@@ -727,24 +998,110 @@ function stepWalking(sim: ResidentSim, resident: Resident, dt: number, random: (
     return;
   }
 
-  // Face where you are going.
-  turnToward(resident, Math.atan2(dx, dz), dt);
-
-  // Ease off near other people instead of walking through them.
+  // Steer around people coming the other way instead of walking into them.
+  // Two people who simply push against each other never get anywhere: they
+  // deadlocked head-on for minutes. People step aside; so do these — always to
+  // their own right, so two of them choose opposite sides and actually pass.
+  let mx = dx / distance;
+  let mz = dz / distance;
   let desired = resident.cruise;
+  let steer = 0;
   for (const other of sim.residents) {
     if (other === resident) continue;
-    const gap = Math.hypot(other.x - resident.x, other.z - resident.z);
-    if (gap < RESIDENTS.personalSpace) desired *= 0.4;
+    const ox = other.x - resident.x;
+    const oz = other.z - resident.z;
+    const gap = Math.hypot(ox, oz);
+    if (gap < 1e-3) continue;
+    if (gap < RESIDENTS.personalSpace) desired *= 0.45;
+    if (gap > 1.6) continue;
+    const ahead = (ox * mx + oz * mz) / gap;
+    if (ahead < 0.6) continue;
+    // Only step aside for someone actually coming towards us: two companions
+    // walking abreast (or a line of people going the same way) should not keep
+    // veering away from their own path.
+    const facingBack = (Math.sin(other.rotationY) * -ox + Math.cos(other.rotationY) * -oz) / gap;
+    if (other.state === "walking" && facingBack < 0.5 && gap > 0.8) continue;
+    // A gentle sidestep: a strong steer made people walk diagonally for good.
+    steer = Math.max(steer, 0.35 * (1 - gap / 1.6));
   }
+  if (steer > 0) {
+    // Rotate the heading to the right by a bounded amount.
+    mx += -mz * steer;
+    mz += mx * steer;
+    const length = Math.hypot(mx, mz) || 1;
+    mx /= length;
+    mz /= length;
+  }
+
+  // Face where you are actually going.
+  turnToward(resident, Math.atan2(mx, mz), dt);
+
   easeSpeed(resident, desired, dt);
 
   const step = Math.min(resident.speed * dt, distance);
   if (step > 0 && distance > 1e-6) {
-    resident.x += (dx / distance) * step;
-    resident.z += (dz / distance) * step;
+    resident.x += mx * step;
+    resident.z += mz * step;
     resident.travelled += step;
     resident.stride += (step / (RESIDENTS.strideMetres / 2)) * Math.PI;
+  }
+
+  // A walker that has not covered ground over a window is stuck, even if it is
+  // jiggling back and forth. Recover from where the body actually is, so no
+  // state can last forever.
+  resident.stuckFor += dt;
+  if (resident.stuckFor > 1.5) {
+    const moved = Math.hypot(resident.x - resident.stuckX, resident.z - resident.stuckZ);
+    resident.stuckFor = 0;
+    resident.stuckX = resident.x;
+    resident.stuckZ = resident.z;
+    if (moved > 0.12) {
+      // Fine: real progress was made in this window.
+      return;
+    }
+    // Close to the target and still not arriving: the body is circling it
+    // (steering and separation can keep it 0.5 m away indefinitely). Accept the
+    // arrival instead of orbiting for a minute.
+    const remaining = Math.hypot(target.x - resident.x, target.z - resident.z);
+    if (remaining < 1.2) {
+      // Close enough: accept it instead of orbiting, but never teleport the body.
+      if (resident.route[resident.routeIndex] === undefined) {
+        resident.state = "pausing";
+        resident.stateAge = 0;
+        resident.waiting = true;
+        resident.timer = RESIDENTS.conversation.rendezvous;
+        resident.speed = 0;
+      } else {
+        resident.fromNode = resident.route[resident.routeIndex]!;
+        resident.routeIndex += 1;
+      }
+      return;
+    }
+    // No sideways teleport: that reads as sliding. Re-plan from where the body
+    // is and let the walk (and its turning) do the work.
+    resident.fromNode = nearestNode(sim.world, resident.x, resident.z);
+    resident.homeComponent = sim.world.component[resident.fromNode] ?? resident.homeComponent;
+    if (resident.spot) {
+      // Re-route to the meeting point; if that is impossible, abandon it.
+      const route = resident.meetingNode !== null ? routeTo(sim.world, resident.fromNode, resident.meetingNode) : [];
+      if (route.length > 0) {
+        resident.route = route;
+        resident.routeIndex = 0;
+      } else {
+        resident.spot = null;
+        resident.meetingNode = null;
+        resident.partner = null;
+        resident.needsRendezvous = resident.buddy !== null;
+        resident.state = "pausing";
+        resident.stateAge = 0;
+        resident.timer = RESIDENTS.pause.min;
+        resident.speed = 0;
+      }
+    } else {
+      resident.route = routeFrom(sim.world, resident.fromNode, 5, random);
+      resident.routeIndex = 0;
+    }
+    sim.stuckRecoveries += 1;
   }
 
   if (!Number.isFinite(resident.x) || !Number.isFinite(resident.z)) {
@@ -892,8 +1249,8 @@ export function poseFor(resident: Resident): ResidentPose {
       legR: -0.03,
       // Positive swings the limb forward, so hands come up in front of the body
       // where a person talking actually gestures.
-      armL: 0.16 + lift * 0.34,
-      armR: 0.13 + leftLift * 0.32,
+      armL: 0.12 + lift * 0.42,
+      armR: 0.1 + leftLift * 0.38,
       armOutL: 0.1 + lift * 0.18,
       armOutR: 0.1 + leftLift * 0.18,
       lean: 0.02,

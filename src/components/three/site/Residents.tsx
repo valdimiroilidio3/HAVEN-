@@ -16,8 +16,9 @@ import * as React from "react";
 import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import * as THREE from "three";
 import { SEED_UNITS } from "@/lib/domain/inventory";
-import { RESIDENTS, buildResidentWorld, createResidentSim, stepResidentSim } from "@/lib/3d/residents";
+import { RESIDENTS, residentWorldFor, stepResidentSim, type Resident, type ResidentSim } from "@/lib/3d/residents";
 import {
+  BODY_INSTANCES,
   BODY_PARTS,
   BODY_PART_COUNT,
   BODY_PRIMITIVE,
@@ -29,10 +30,14 @@ import {
   type BodyPartName,
 } from "@/lib/3d/resident-skeleton";
 import {
+  acquireResidentSession,
   clearResidentSnapshot,
   getResidentSelection,
+  isResidentRunning,
   publishResidentSnapshot,
   registerResidentControls,
+  resetResidentSession,
+  setResidentRunning,
   setResidentSelection,
   type ResidentSample,
 } from "@/lib/3d/resident-store";
@@ -43,9 +48,8 @@ export function Residents({ count = RESIDENTS.defaultCount }: { count?: number }
   const group = React.useRef<THREE.Group>(null);
   const meshes = React.useRef<Partial<Record<BodyPartName, THREE.InstancedMesh | null>>>({});
   const highlight = React.useRef<THREE.Mesh>(null);
-  const simRef = React.useRef<ReturnType<typeof createResidentSim> | null>(null);
+  const simRef = React.useRef<ResidentSim | null>(null);
   const generation = React.useRef(0);
-  const paused = React.useRef(false);
   const [revision, setRevision] = React.useState(0);
 
   const entries = React.useMemo(
@@ -59,7 +63,8 @@ export function Residents({ count = RESIDENTS.defaultCount }: { count?: number }
     [],
   );
 
-  const world = React.useMemo(() => buildResidentWorld(entries), [entries]);
+  // Stable across mounts, so the population session is reused rather than rebuilt.
+  const world = React.useMemo(() => residentWorldFor(entries), [entries]);
 
   // Two geometries and five materials serve the whole population.
   const assets = React.useMemo(() => {
@@ -101,6 +106,7 @@ export function Residents({ count = RESIDENTS.defaultCount }: { count?: number }
       up: new THREE.Vector3(0, 1, 0),
       frustum: new THREE.Frustum(),
       projection: new THREE.Matrix4(),
+      view: new THREE.Matrix4(),
       point: new THREE.Vector3(),
       reportAt: 0,
       sample: [] as ResidentSample[],
@@ -110,7 +116,9 @@ export function Residents({ count = RESIDENTS.defaultCount }: { count?: number }
 
   // The simulation is built once per revision — never per frame, never twice.
   React.useEffect(() => {
-    const sim = createResidentSim(world, { count, seed: 20260214 + generation.current * 7919 });
+    // The session lives in the store, not in this component: a remount resumes
+    // the same population instead of starting a second one.
+    const { sim } = acquireResidentSession(world, count, 20260214 + generation.current * 7919);
     simRef.current = sim;
     setResidentSelection(null);
 
@@ -126,6 +134,7 @@ export function Residents({ count = RESIDENTS.defaultCount }: { count?: number }
         armLower: resident.style.skin,
         legUpper: resident.style.trousers,
         legLower: resident.style.trousers,
+        hand: resident.style.skin,
         shoe: SHOE_COLOUR,
       };
       for (const part of BODY_PARTS) {
@@ -144,23 +153,15 @@ export function Residents({ count = RESIDENTS.defaultCount }: { count?: number }
     registerResidentControls({
       regenerate: () => {
         generation.current += 1;
+        resetResidentSession();
         setRevision((value) => value + 1);
       },
-      setRunning: (running) => {
-        paused.current = !running;
-      },
+      setRunning: (next) => setResidentRunning(next),
     });
 
-    const onVisibility = () => {
-      // A hidden tab does not advance the population, and coming back does not
-      // start a second simulation.
-      paused.current = document.hidden;
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-    onVisibility();
-
     return () => {
-      document.removeEventListener("visibilitychange", onVisibility);
+      // Deliberately does not reset the session: the population survives the
+      // scene being torn down and rebuilt.
       registerResidentControls(null);
       clearResidentSnapshot();
       simRef.current = null;
@@ -172,12 +173,18 @@ export function Residents({ count = RESIDENTS.defaultCount }: { count?: number }
     const root = group.current;
     if (!sim || !root) return;
 
-    if (!paused.current) {
+    if (isResidentRunning() && !document.hidden) {
       // Cap the step: a tab returning from the background delivers seconds at once.
       stepResidentSim(sim, Math.min(delta, RESIDENTS.maxDelta));
     }
 
-    scratch.projection.multiplyMatrices(state.camera.projectionMatrix, state.camera.matrixWorldInverse);
+    // The camera's world matrix is refreshed by the renderer *after* this
+    // callback, so reading `matrixWorldInverse` here would test the previous
+    // frame's camera (a stale count whenever the view moves). Update it first.
+    const camera = state.camera;
+    camera.updateMatrixWorld();
+    scratch.view.copy(camera.matrixWorld).invert();
+    scratch.projection.multiplyMatrices(camera.projectionMatrix, scratch.view);
     scratch.frustum.setFromProjectionMatrix(scratch.projection);
 
     let visible = 0;
@@ -225,7 +232,7 @@ export function Residents({ count = RESIDENTS.defaultCount }: { count?: number }
     if (scratch.reportAt < 0.25) return;
     scratch.reportAt = 0;
 
-    const counts = { walking: 0, pausing: 0, interacting: 0, idle: 0 };
+    const counts: Record<Resident["state"], number> = { walking: 0, pausing: 0, interacting: 0, idle: 0 };
     for (const resident of sim.residents) counts[resident.state] += 1;
 
     scratch.sample.length = 0;
@@ -234,8 +241,8 @@ export function Residents({ count = RESIDENTS.defaultCount }: { count?: number }
 
     publishResidentSnapshot({
       created: sim.residents.length,
-      added: sim.residents.length,
-      visible,
+      instances: sim.residents.length * BODY_INSTANCES,
+      inFrustum: visible,
       walking: counts.walking,
       pausing: counts.pausing,
       interacting: counts.interacting,
@@ -243,10 +250,13 @@ export function Residents({ count = RESIDENTS.defaultCount }: { count?: number }
       conversationsStarted: sim.conversations.started,
       conversationsEnded: sim.conversations.ended,
       navFailures: sim.navFailures,
+      unreachableMeetings: sim.unreachableMeetings,
+      stuckRecoveries: sim.stuckRecoveries,
       errors: [],
+      sceneDrawCalls: state.gl.info.render.calls,
       selected: focused ? describe(sim, focused) : null,
       sample: scratch.sample.slice(),
-      running: !paused.current,
+      running: isResidentRunning(),
       updatedAt: state.clock.elapsedTime,
     });
   });
@@ -294,7 +304,7 @@ export function Residents({ count = RESIDENTS.defaultCount }: { count?: number }
   );
 }
 
-function describe(sim: ReturnType<typeof createResidentSim>, resident: ReturnType<typeof createResidentSim>["residents"][number]): ResidentSample {
+function describe(sim: ResidentSim, resident: Resident): ResidentSample {
   const node = resident.route[resident.routeIndex];
   const target = node !== undefined ? sim.world.nodes[node] : undefined;
   return {

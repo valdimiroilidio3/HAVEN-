@@ -285,7 +285,9 @@ function drawResidents(frame: Frame, only?: typeof sim.residents): void {
       for (const tri of triangles) {
         // The hair is a hemisphere in the renderer; drop the lower half here so
         // the offline image matches what WebGL draws.
-        if (transform.part === "hair" && (tri[0]![1] + tri[1]![1] + tri[2]![1]) / 3 < -0.02) continue;
+        // The cap of hair is a hemisphere in the renderer and in WebGL; the
+        // long panel (slot 1) is drawn whole.
+        if (transform.part === "hair" && transform.slot === 0 && (tri[0]![1] + tri[1]![1] + tri[2]![1]) / 3 < -0.02) continue;
         triangle(
           frame,
           placeVertex(tri[0]!, transform),
@@ -303,7 +305,9 @@ function drawGround(frame: Frame): void {
   // Tiles, not one giant quad: a quad that extends behind the camera is
   // rejected as a whole, which left the ground as sky in the first render.
   const size = 220;
-  const tile = 10;
+  // Small tiles: a triangle with one vertex behind the camera is rejected whole,
+  // and a 10 m tile left a blue band of missing ground in the near foreground.
+  const tile = 4;
   const grass: Vec3 = [0.44, 0.5, 0.33];
   for (let x = SITE.center.x - size; x < SITE.center.x + size; x += tile) {
     for (let z = SITE.center.z - size; z < SITE.center.z + size; z += tile) {
@@ -339,9 +343,7 @@ function drawGround(frame: Frame): void {
 }
 
 /** A measured reference next to the figures: 1.78 m adult, 2.70 m door. */
-function drawScaleReferences(frame: Frame): void {
-  const x = SITE.center.x - 16;
-  const z = SITE.center.z - 8;
+function drawScaleReferences(frame: Frame, x = SITE.center.x - 16, z = SITE.center.z - 8): void {
   const post = (height: number, colour: Vec3, offset: number) => {
     const width = 0.16;
     const y = 0;
@@ -442,7 +444,8 @@ const sideX = -axisZ / axisLength;
 const sideZ = axisX / axisLength;
 const closeup = makeFrame([midX + sideX * 3.1, 1.62, midZ + sideZ * 3.1], [midX, 1.05, midZ], 1200, 900, 42);
 drawGround(closeup);
-drawScaleReferences(closeup);
+// Put the measuring posts beside the pair, not behind their heads.
+drawScaleReferences(closeup, midX + sideX * -2.0 + axisX * 1.2, midZ + sideZ * -2.0 + axisZ * 1.2);
 drawResidents(closeup);
 writePng("docs/residents-closeup.png", closeup);
 
@@ -464,6 +467,31 @@ const headZ = solo.z + Math.cos(solo.rotationY) * 1.0;
 const head = makeFrame([headX, 1.58, headZ], [solo.x, 1.55, solo.z], 700, 700, 36);
 drawResidents(head, [solo]);
 writePng("docs/residents-head.png", head);
+
+// 4. One person mid-stride, from the side: the gait is the thing under test —
+//    a stance leg planted on the path and a bent swing knee.
+let strideWalker = sim.residents.find((resident) => resident.state === "walking" && Math.abs(Math.sin(resident.stride)) > 0.9);
+for (let i = 0; i < 200 && !strideWalker; i += 1) {
+  for (let k = 0; k < 3; k += 1) stepResidentSim(sim, 1 / 60);
+  strideWalker = sim.residents.find((resident) => resident.state === "walking" && Math.abs(Math.sin(resident.stride)) > 0.9);
+}
+if (strideWalker) {
+  const side = strideWalker.rotationY + Math.PI / 2;
+  const walk = makeFrame(
+    [strideWalker.x + Math.sin(side) * 3.0, 1.18, strideWalker.z + Math.cos(side) * 3.0],
+    [strideWalker.x, 0.95, strideWalker.z],
+    900,
+    900,
+    40,
+  );
+  drawGround(walk);
+  drawResidents(walk, [strideWalker]);
+  writePng("docs/residents-walking.png", walk);
+  console.log(
+    `walking ${strideWalker.id}: stride ${(Math.abs(Math.sin(strideWalker.stride)) * 100).toFixed(0)} %, ` +
+      `speed ${strideWalker.speed.toFixed(2)} m/s`,
+  );
+}
 
 const states = sim.residents.reduce<Record<string, number>>((counts, resident) => {
   counts[resident.state] = (counts[resident.state] ?? 0) + 1;

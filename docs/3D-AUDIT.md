@@ -1001,9 +1001,10 @@ Os testes provam, com a simulação real a correr minutos de tempo simulado:
 - as pausas expiram: ninguém fica parado mais de um minuto fora de conversa;
 - a mesma semente dá o mesmo resultado; sementes diferentes dão posições
   diferentes;
-- o corpo tem 18 peças, 1,60–1,93 m do chão ao topo da cabeça, cabeça a 1/7–1/8
-  da altura, pés no chão, joelhos entre a anca e o tornozelo, nariz e olhos na
-  face;
+- o corpo tem 22 peças (11 grupos, 11 *draw calls* para 20 pessoas), 1,60–1,93 m
+  do chão ao topo da cabeça, cabeça a 1/7–1/8 da altura, pés no chão, joelhos
+  entre a anca e o tornozelo, nariz e olhos na face, mãos nas pontas dos
+  antebraços e um pescoço curto entre a cabeça e os ombros;
 - `navFailures === 0`.
 
 ### 19.7 Imagens
@@ -1013,7 +1014,26 @@ Os testes provam, com a simulação real a correr minutos de tempo simulado:
 1,78 m e 2,70 m) e `docs/residents-head.png` (o rosto: olhos, nariz, cabelo —
 geometria estática; **não há expressões faciais**).
 
-`npx tsx scripts/render-residents.ts` regenera as três.
+`docs/residents-walking.png` (uma pessoa a meio passo, de perfil: perna de apoio
+plantada, joelho de balanço fletido, braços em oposição) completa o conjunto.
+
+`npx tsx scripts/render-residents.ts` regenera as quatro.
+
+### 19.7.1 Marcha e articulação (ronda final)
+
+- **Pernas:** `shinAngle = angle · 0,55 + swing · 0,7`, com `swing` só quando o
+  estado é `walking`. O corpo desce `shift = baseY − lowestSole`, pelo que a sola
+  de apoio fica **exatamente** em `RESIDENTS.groundY`; parada, `swing = 0` e
+  ninguém flutua.
+- **Braços e pernas aduzem/abduzem** por `lean` (rotação sobre o eixo da frente do
+  corpo), não só para a frente: é isso que impede os braços de ficarem dentro do
+  tronco. `limbAxis()` devolve a direção combinada `tilt`/`lean`/`yaw`; o
+  rasterizador e o renderer usam-na.
+- **Ombros:** uma segunda instância de `chest` dá a linha dos ombros, sem a qual o
+  casaco era um ovo e os braços flutuavam ao lado.
+- **Variação:** altura (1,60–1,93 m), largura de ombros, amplitude de passada,
+  cinco tons de pele, cinco de cabelo, oito de camisa, cinco de calças e três
+  estilos de cabelo (curto, comprido, calvo). **Geometria**, não expressão facial.
 
 ### 19.8 Limites honestos
 
@@ -1024,7 +1044,11 @@ geometria estática; **não há expressões faciais**).
   cores e comportamento; o que **não** está provado é o trajeto WebGL, as sombras
   e o aspeto final no ecrã do visitante.
 - **Sem expressões faciais, sem roupa articulada, sem cabelo animado.** Os corpos
-  são formas primitivas compostas; a variedade vem de proporções e cores.
+  são formas primitivas compostas; a variedade vem de proporções, cabelo e cores.
+  O rosto tem olhos e nariz estáticos e nada mais.
+- **Trânsito automóvel: estático.** Os carros continuam estacionados nos
+  alpendres (ronda `39f3dfc`); não há veículos em movimento, cruzamentos
+  geridos nem manobras de estacionamento. A Fase 4 está, por isso, **parcial**.
 - **Nenhum modelo externo é carregado.** Os corpos são geometria gerada no
   repositório; por isso o canal de "model-load errors" do HUD está vazio por
   construção, não por omissão.
@@ -1033,3 +1057,22 @@ geometria estática; **não há expressões faciais**).
 - **H13 continua a ser atravessada** pelo anel exterior (`path/ring-outer`), um
   achado médio pré-existente. A rede é usada tal como está; não foi corrigida em
   silêncio.
+
+### 19.9 Medição da ronda final
+
+`npx tsx scripts/probe-residents.ts 13` (13 min de cena, 15 Hz, 20 pessoas):
+
+| métrica | valor |
+| --- | --- |
+| pior afastamento da rede pedonal | **0,50 m** |
+| par mais próximo | **0,43 m** |
+| maior troço a "andar sem sair do sítio" | **0,2 s** |
+| recuperações de encravamento | **2** |
+| conversas | **34 começadas / 34 terminadas** |
+| reuniões inalcançáveis | **0** |
+| falhas de navegação | **0** |
+
+`npx tsx scripts/bench-residents.ts` (20 pessoas, 5 000 frames): passo da
+simulação **0,063 ms**, corpos + matrizes **0,100 ms** por frame — **0,16 ms**
+de CPU por frame, com as animações ligadas. Isto mede CPU, não GPU: os *draw
+calls* (11) e as sombras não foram cronometrados num browser.

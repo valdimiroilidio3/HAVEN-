@@ -21,20 +21,22 @@ export type BodyPartName =
   | "armLower"
   | "legUpper"
   | "legLower"
-  | "shoe";
+  | "shoe"
+  | "hand";
 
 /** How many instances of each part one body uses. */
 export const BODY_PART_COUNT: Record<BodyPartName, number> = {
   head: 3, // skull, nose, neck
-  hair: 1,
+  hair: 2, // cap of hair, plus a long panel that is shrunk for short hair
   eye: 2,
-  chest: 1,
+  chest: 2, // body of the jacket, plus the shoulder line
   hips: 1,
   armUpper: 2,
   armLower: 2,
   legUpper: 2,
   legLower: 2,
   shoe: 2,
+  hand: 2,
 };
 
 /** Parts in draw order. */
@@ -49,6 +51,7 @@ export const BODY_PARTS: BodyPartName[] = [
   "legUpper",
   "legLower",
   "shoe",
+  "hand",
 ];
 
 /** Primitive a part is drawn with: an ellipsoid or a cylinder along its axis. */
@@ -65,6 +68,7 @@ export const BODY_PRIMITIVE: Record<BodyPartName, Primitive> = {
   legUpper: "cylinder",
   legLower: "cylinder",
   shoe: "ellipsoid",
+  hand: "ellipsoid",
 };
 
 export const PART_COLOUR: Record<BodyPartName, "skin" | "hair" | "shirt" | "trousers" | "shoe" | "eye"> = {
@@ -78,20 +82,21 @@ export const PART_COLOUR: Record<BodyPartName, "skin" | "hair" | "shirt" | "trou
   legUpper: "trousers",
   legLower: "trousers",
   shoe: "shoe",
+  hand: "skin",
 };
 
 /** Skeleton, metres, for a 1.78 m adult. Scaled per resident by height. */
 export const SKELETON = {
   hipY: 0.92,
   shoulderY: 1.44,
-  headY: 1.63,
+  headY: 1.6,
   hipHalf: 0.095,
   shoulderHalf: 0.2,
   thigh: 0.45,
   shin: 0.42,
   upperArm: 0.29,
   forearm: 0.26,
-  chestHalfWidth: 0.188,
+  chestHalfWidth: 0.176,
   chestHalfHeight: 0.245,
   chestHalfDepth: 0.115,
   hipHalfWidth: 0.155,
@@ -115,6 +120,8 @@ export interface BodyTransform {
   yaw: number;
   /** Tilt of a cylinder about the body's right axis, radians (positive forward). */
   tilt: number;
+  /** Splay of a cylinder about the body's forward axis, radians (positive = right). */
+  lean: number;
   /** Instance slot within its part: 0, or 0/1 for paired limbs. */
   slot: number;
 }
@@ -137,7 +144,7 @@ export function createBodyBuffer(): BodyTransform[] {
   const buffer: BodyTransform[] = [];
   for (const part of BODY_PARTS) {
     for (let i = 0; i < BODY_PART_COUNT[part]; i += 1) {
-      buffer.push({ part, x: 0, y: 0, z: 0, sx: 0, sy: 0, sz: 0, yaw: 0, tilt: 0, slot: i });
+      buffer.push({ part, x: 0, y: 0, z: 0, sx: 0, sy: 0, sz: 0, yaw: 0, tilt: 0, lean: 0, slot: i });
     }
   }
   return buffer;
@@ -158,6 +165,8 @@ export function fillBody(resident: Resident, out: BodyTransform[]): number {
   const bob = pose.bob;
   const baseY = RESIDENTS.groundY;
   const interacting = resident.state === "interacting";
+  // Gait: not everyone swings their limbs the same distance.
+  const gait = style.gait;
 
   const hipY = baseY + (SKELETON.hipY + bob) * s;
   const shoulderY = baseY + (SKELETON.shoulderY + bob) * s;
@@ -174,6 +183,7 @@ export function fillBody(resident: Resident, out: BodyTransform[]): number {
     sy: number,
     sz: number,
     tilt = 0,
+    lean = 0,
   ) => {
     const target = out[cursor];
     if (!target) {
@@ -190,99 +200,170 @@ export function fillBody(resident: Resident, out: BodyTransform[]): number {
     target.sz = sz;
     target.yaw = yaw;
     target.tilt = tilt;
+    target.lean = lean;
     const slot = slots[part] ?? 0;
     slots[part] = slot + 1;
     target.slot = slot;
     cursor += 1;
   };
 
+  const walking = resident.state === "walking";
+  const legs = ([[-1, pose.legL, resident.stride], [1, pose.legR, resident.stride + Math.PI]] as const).map(
+    ([side, legPose, phase]) => {
+      const angle = legPose * gait;
+      // Standing still, both feet are on the ground; only a gait lifts one.
+      const swing = walking ? Math.max(0, Math.cos(phase)) : 0;
+      const shinAngle = angle * 0.55 + swing * 0.7;
+      const kneeY = hipY - Math.cos(angle) * SKELETON.thigh * s;
+      const ankleY = kneeY - Math.cos(shinAngle) * SKELETON.shin * s;
+      const kneeForward = Math.sin(angle) * SKELETON.thigh * s;
+      const shinForward = kneeForward + Math.sin(shinAngle) * SKELETON.shin * s;
+      return { side, angle, shinAngle, kneeY, ankleY, kneeForward, shinForward, sole: ankleY - 0.05 * s };
+    },
+  );
+  // The body sits as low as the lowest foot requires, never below the path.
+  const lowestSole = Math.min(...legs.map((leg) => leg.sole));
+  const shift = baseY - lowestSole;
+
   // --- head and hair ------------------------------------------------------
-  const headRadius = 0.102 * s;
+  const headRadius = 0.105 * s;
   const headY = baseY + (SKELETON.headY + bob) * s;
-  put("head", 0, headY, lean * 0.6, headRadius, headRadius * 1.15, headRadius * 1.04);
+  put("head", 0, headY + shift, lean * 0.6, headRadius, headRadius * 1.15, headRadius * 1.04);
   // Nose: a small bump on the face side (+Z), so which way a body faces is
   // readable at a glance. Geometry only — no facial expression is animated.
-  put("head", 0, headY - 0.012 * s, lean * 0.6 + headRadius * 0.94, headRadius * 0.2, headRadius * 0.24, headRadius * 0.3);
-  put("hair", 0, headY + headRadius * 0.16, lean * 0.6 - 0.008 * s, headRadius * 1.06, headRadius * 1.14, headRadius * 1.09);
-  // Neck: without it the head floats above the shoulders.
-  put("head", 0, shoulderY + 0.03 * s, lean * 0.8, headRadius * 0.46, headRadius * 0.62, headRadius * 0.44);
+  put("head", 0, headY - 0.016 * s + shift, lean * 0.6 + headRadius * 0.9, headRadius * 0.17, headRadius * 0.2, headRadius * 0.24);
+  // Hair: a cap over the skull, plus a panel down the back that only exists for
+  // the long style. A bald head simply shrinks both to nothing, so the instance
+  // slots stay stable for the renderer.
+  const hairStyle = style.hairStyle;
+  const capScale = hairStyle === 2 ? 0.001 : 1;
+  put(
+    "hair",
+    0,
+    headY + headRadius * 0.16 + shift,
+    lean * 0.6 - 0.008 * s,
+    headRadius * 1.1 * capScale,
+    headRadius * 1.12 * capScale,
+    headRadius * 1.13 * capScale,
+  );
+  const longHair = hairStyle === 1 ? 1 : 0.001;
+  put(
+    "hair",
+    0,
+    headY - headRadius * 0.42 + shift,
+    lean * 0.6 - headRadius * 0.34,
+    headRadius * 0.94 * longHair,
+    headRadius * 1.05 * longHair,
+    headRadius * 0.62 * longHair,
+  );
+  // Neck: thick and short, so the head sits on the shoulders instead of hovering.
+  put("head", 0, headY - headRadius * 1.18 + shift, lean * 0.6, headRadius * 0.62, headRadius * 0.5, headRadius * 0.6);
   for (const side of [-1, 1] as const) {
-    put("eye", side * headRadius * 0.42, headY + headRadius * 0.16, lean * 0.6 + headRadius * 0.88, headRadius * 0.15, headRadius * 0.13, headRadius * 0.1);
+    put("eye", side * headRadius * 0.34, headY + headRadius * 0.12 + shift, lean * 0.6 + headRadius * 0.9, headRadius * 0.115, headRadius * 0.1, headRadius * 0.08);
   }
 
   // --- chest and hips -----------------------------------------------------
   put(
     "chest",
     0,
-    (shoulderY + hipY) / 2 + 0.055 * s,
+    (shoulderY + hipY) / 2 + 0.04 * s + shift,
     lean,
     SKELETON.chestHalfWidth * wide * s,
-    SKELETON.chestHalfHeight * 1.06 * s,
+    SKELETON.chestHalfHeight * 0.96 * s,
     SKELETON.chestHalfDepth * wide * s,
   );
-  put("hips", 0, hipY + 0.015 * s, 0, SKELETON.hipHalfWidth * s, SKELETON.hipHalfHeight * s, SKELETON.hipHalfDepth * s);
+  // A flatter, wider mass at the shoulder line. Without it the jacket is one
+  // egg and the arms hang beside it with daylight in between.
+  put(
+    "chest",
+    0,
+    shoulderY - 0.07 * s + shift,
+    lean * 0.8,
+    (SKELETON.chestHalfWidth * wide + 0.03) * s,
+    0.085 * s,
+    SKELETON.chestHalfDepth * wide * 0.96 * s,
+  );
+  put("hips", 0, hipY + 0.015 * s + shift, 0, SKELETON.hipHalfWidth * s, SKELETON.hipHalfHeight * s, SKELETON.hipHalfDepth * s);
 
   // --- legs ---------------------------------------------------------------
-  for (const [side, legAngle] of [[-1, pose.legL], [1, pose.legR]] as const) {
-    const hipX = side * SKELETON.hipHalf * s;
-    const thighLength = SKELETON.thigh * s;
-    const kneeY = hipY - Math.cos(legAngle) * thighLength;
-    const kneeForward = Math.sin(legAngle) * thighLength;
-    put(
-      "legUpper",
-      hipX,
-      (hipY + kneeY) / 2,
-      kneeForward / 2,
-      0.068 * s,
-      thighLength,
-      0.068 * s,
-      legAngle,
-    );
-
-    const shinAngle = legAngle * 0.55;
-    const shinLength = SKELETON.shin * s;
-    const ankleY = kneeY - Math.cos(shinAngle) * shinLength;
-    const shinForward = kneeForward + Math.sin(shinAngle) * shinLength;
+  // A walk is not a symmetric scissor. The swing leg bends its knee, which
+  // shortens it and lifts the foot; the stance leg stays long and carries the
+  // body. Without the knee bend both feet left the ground at once and everyone
+  // hovered; with it, the body drops so the stance foot rests on the path.
+  for (const leg of legs) {
+    const hipX = leg.side * SKELETON.hipHalf * s;
+    const legLean = leg.side * 0.035;
+    put("legUpper", hipX, (hipY + leg.kneeY) / 2 + shift, leg.kneeForward / 2, 0.068 * s, SKELETON.thigh * s, 0.068 * s, leg.angle, legLean);
     put(
       "legLower",
       hipX,
-      (kneeY + ankleY) / 2,
-      kneeForward + (Math.sin(shinAngle) * shinLength) / 2,
+      (leg.kneeY + leg.ankleY) / 2 + shift,
+      leg.kneeForward + Math.sin(leg.shinAngle) * SKELETON.shin * s * 0.5,
       0.052 * s,
-      shinLength,
+      SKELETON.shin * s,
       0.052 * s,
-      shinAngle,
+      leg.shinAngle,
+      legLean,
     );
-
-    // Shoe: flat on the ground, pointing forward.
-    put("shoe", hipX, baseY + 0.042 * s, shinForward + 0.045 * s, 0.062 * s, 0.042 * s, 0.105 * s);
+    // Shoe hangs from the ankle, so it travels with the foot.
+    const shoeHalfHeight = 0.042 * s;
+    put("shoe", hipX, leg.sole + shift + shoeHalfHeight, leg.shinForward + 0.045 * s, 0.062 * s, shoeHalfHeight, 0.105 * s);
   }
 
   // --- arms ---------------------------------------------------------------
-  for (const [side, armAngle, armOut] of [[-1, pose.armL, pose.armOutL], [1, pose.armR, pose.armOutR]] as const) {
+  for (const [side, armPose, armOut] of [[-1, pose.armL, pose.armOutL], [1, pose.armR, pose.armOutR]] as const) {
+    const armAngle = armPose * gait;
     // The shoulder joint sits just inside the chest, so the arm touches the
     // torso instead of floating beside it.
-    const shoulderX = side * (SKELETON.chestHalfWidth * wide * 0.92 + 0.03) * s + side * armOut * 0.06 * s;
-    const jointY = shoulderY - 0.07 * s;
+    const shoulderX = side * (SKELETON.chestHalfWidth * wide * 0.94 + 0.03) * s;
+    const jointY = shoulderY - 0.1 * s;
     const upperLength = SKELETON.upperArm * s;
-    const elbowY = jointY - Math.cos(armAngle) * upperLength;
+    // Arms splay out from the body instead of hanging inside the chest: without
+    // the splay the sleeves merge into the torso and a figure loses its arms.
+    const armLean = side * (0.1 + armOut * 0.22);
+    const elbowY = jointY - Math.cos(armAngle) * Math.cos(armLean) * upperLength;
     const elbowForward = Math.sin(armAngle) * upperLength;
-    put("armUpper", shoulderX, (jointY + elbowY) / 2, elbowForward / 2, 0.05 * s, upperLength, 0.05 * s, armAngle);
+    const elbowOut = Math.sin(armLean) * upperLength;
+    put(
+      "armUpper",
+      shoulderX + elbowOut / 2,
+      (jointY + elbowY) / 2 + shift,
+      elbowForward / 2,
+      0.05 * s,
+      upperLength,
+      0.05 * s,
+      armAngle,
+      armLean,
+    );
 
     // The forearm bends forward: that bend is what makes a standing figure read
     // as a person rather than as a post.
-    const forearmAngle = armAngle + (interacting ? 0.5 : 0.12);
+    const forearmAngle = armAngle + (interacting ? 0.3 : 0.12);
     const forearmLength = SKELETON.forearm * s;
     const handY = elbowY - Math.cos(forearmAngle) * forearmLength;
     put(
       "armLower",
-      shoulderX,
-      (elbowY + handY) / 2,
+      shoulderX + elbowOut + Math.sin(armLean * 0.4) * forearmLength * 0.3,
+      (elbowY + handY) / 2 + shift,
       elbowForward + (Math.sin(forearmAngle) * forearmLength) / 2,
       0.038 * s,
       forearmLength,
       0.038 * s,
       forearmAngle,
+      armLean * 0.4,
+    );
+    // A hand at the end of the forearm: without it the arm stops at a stump and
+    // a standing figure reads as a mannequin.
+    put(
+      "hand",
+      shoulderX + elbowOut + Math.sin(armLean * 0.4) * forearmLength * 0.6,
+      handY - 0.02 * s + shift,
+      elbowForward + Math.sin(forearmAngle) * forearmLength,
+      0.042 * s,
+      0.055 * s,
+      0.036 * s,
+      forearmAngle,
+      armLean * 0.4,
     );
   }
 
@@ -294,11 +375,15 @@ export function fillBody(resident: Resident, out: BodyTransform[]): number {
  * drawn along its own `tilt` about the body's right axis, then turned by `yaw`.
  */
 export function limbAxis(transform: BodyTransform): { x: number; y: number; z: number } {
-  const dirY = -Math.cos(transform.tilt);
+  const cosTilt = Math.cos(transform.tilt);
+  const dirX = cosTilt * Math.sin(transform.lean);
+  const dirY = -cosTilt * Math.cos(transform.lean);
   const dirZ = Math.sin(transform.tilt);
+  const cos = Math.cos(transform.yaw);
+  const sin = Math.sin(transform.yaw);
   return {
-    x: dirZ * Math.sin(transform.yaw),
+    x: dirX * cos + dirZ * sin,
     y: dirY,
-    z: dirZ * Math.cos(transform.yaw),
+    z: -dirX * sin + dirZ * cos,
   };
 }

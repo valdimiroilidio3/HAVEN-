@@ -41,7 +41,9 @@ const buffer = createBodyBuffer();
 
 function partsOf(resident: Resident) {
   const written = fillBody(resident, buffer);
-  return { written, parts: buffer.slice(0, written) };
+  // `fillBody` writes in place, so the entries must be copied or a later call
+  // would silently rewrite an earlier result.
+  return { written, parts: buffer.slice(0, written).map((entry) => ({ ...entry })) };
 }
 
 function bounds(parts: ReturnType<typeof partsOf>["parts"]) {
@@ -56,10 +58,13 @@ function bounds(parts: ReturnType<typeof partsOf>["parts"]) {
 }
 
 describe("the body", () => {
-  it("is made of eighteen articulated pieces per person", () => {
-    expect(BODY_INSTANCES).toBe(18);
+  it("is made of twenty-two articulated pieces per person", () => {
+    expect(BODY_INSTANCES).toBe(22);
     expect(Object.values(BODY_PART_COUNT).reduce((a, b) => a + b, 0)).toBe(BODY_INSTANCES);
-    expect(BODY_PARTS).toHaveLength(10);
+    expect(BODY_PARTS).toHaveLength(11);
+    // Hands and forearms are skin; hair has two slots (cap and long panel).
+    expect(BODY_PART_COUNT.hand).toBe(2);
+    expect(BODY_PART_COUNT.hair).toBe(2);
     const { written, parts } = partsOf(sim.residents[0]!);
     expect(written).toBe(BODY_INSTANCES);
     expect(parts).toHaveLength(BODY_INSTANCES);
@@ -155,7 +160,9 @@ describe("the body", () => {
     // Mid-stride at zero phase: both legs are under the body, so the only
     // asymmetry left is the deliberate one in the arms.
     // Facing +Z at the origin, so world axes are the body's own axes.
-    const resident = { ...sim.residents[0]!, state: "walking" as const, stride: 0, speed: 1.3, x: 0, z: 0, rotationY: 0 };
+    // Double-support phase: both knees straight and both legs extended, so the
+    // only asymmetry left is the deliberate one in the arms.
+    const resident = { ...sim.residents[0]!, state: "walking" as const, stride: Math.PI / 2, speed: 1.3, x: 0, z: 0, rotationY: 0 };
     const { parts } = partsOf(resident);
     for (const part of ["armUpper", "armLower", "legUpper", "legLower", "shoe"] as const) {
       const pair = parts.filter((entry) => entry.part === part);
@@ -164,10 +171,46 @@ describe("the body", () => {
       // gestures more than the other), so depth is only required for legs.
       expect(Math.abs(pair[0]!.x - pair[1]!.x)).toBeGreaterThan(0.1);
       if (part.startsWith("leg") || part === "shoe") {
+        // At double support the legs are scissored front/back on purpose, so
+        // only their height must match: neither foot is higher than the other.
         expect(Math.abs(pair[0]!.y - pair[1]!.y)).toBeLessThan(0.02);
-        expect(Math.abs(pair[0]!.z - pair[1]!.z)).toBeLessThan(0.02);
       }
     }
+  });
+
+  it("puts the feet on the ground, and lifts the swinging foot", () => {
+    const standing = { ...sim.residents[0]!, state: "pausing" as const, stride: 0, x: 0, z: 0, rotationY: 0 };
+    const planted = partsOf(standing).parts.filter((entry) => entry.part === "shoe");
+    for (const shoe of planted) {
+      const sole = shoe.y - shoe.sy;
+      expect(Math.abs(sole - RESIDENTS.groundY)).toBeLessThan(0.03);
+    }
+
+    // Over a step, exactly one foot carries the body and the other swings:
+    // the planted sole stays on the path and the swinging foot lifts clear.
+    let maxLift = 0;
+    for (let phase = 0; phase < Math.PI * 2; phase += Math.PI / 8) {
+      const walking = { ...standing, state: "walking" as const, speed: 1.3, stride: phase };
+      const shoes = partsOf(walking).parts.filter((entry) => entry.part === "shoe");
+      const soles = shoes.map((shoe) => shoe.y - shoe.sy);
+      expect(Math.min(...soles), `no foot on the ground at phase ${phase.toFixed(2)}`).toBeLessThan(RESIDENTS.groundY + 0.01);
+      expect(Math.min(...soles), `a foot sinks at phase ${phase.toFixed(2)}`).toBeGreaterThan(RESIDENTS.groundY - 0.01);
+      maxLift = Math.max(maxLift, Math.max(...soles) - Math.min(...soles));
+    }
+    expect(maxLift, "no foot ever leaves the ground").toBeGreaterThan(0.05);
+  });
+
+  it("gives people different gaits", () => {
+    const gaits = sim.residents.map((resident) => resident.style.gait);
+    expect(new Set(gaits.map((value) => value.toFixed(3))).size).toBeGreaterThan(10);
+    expect(Math.min(...gaits)).toBeGreaterThan(0.8);
+    expect(Math.max(...gaits)).toBeLessThan(1.2);
+
+    // A short, quick gait swings less than a long one.
+    const walker = { ...sim.residents[0]!, state: "walking" as const, speed: 1.3, stride: Math.PI / 2, x: 0, z: 0, rotationY: 0 };
+    const narrow = partsOf({ ...walker, style: { ...walker.style, gait: 0.85 } }).parts.find((entry) => entry.part === "legUpper")!;
+    const wide = partsOf({ ...walker, style: { ...walker.style, gait: 1.15 } }).parts.find((entry) => entry.part === "legUpper")!;
+    expect(Math.abs(wide.tilt)).toBeGreaterThan(Math.abs(narrow.tilt));
   });
 
   it("dresses everyone in skin, shirt, trousers and shoes", () => {
@@ -215,12 +258,22 @@ describe("the body", () => {
 
   it("points limb cylinders along their own axis", () => {
     // Straight down when the limb hangs, so a standing figure has vertical legs.
-    const axis = limbAxis({ part: "legUpper", x: 0, y: 0, z: 0, sx: 1, sy: 1, sz: 1, yaw: 0, tilt: 0, slot: 0 });
+    const axis = limbAxis({ part: "legUpper", x: 0, y: 0, z: 0, sx: 1, sy: 1, sz: 1, yaw: 0, tilt: 0, lean: 0, slot: 0 });
     expect(axis.y).toBeCloseTo(-1, 6);
     // Swinging forward tips the axis toward +Z, which is where the body looks.
-    const forward = limbAxis({ part: "legUpper", x: 0, y: 0, z: 0, sx: 1, sy: 1, sz: 1, yaw: 0, tilt: 0.5, slot: 0 });
+    const forward = limbAxis({ part: "legUpper", x: 0, y: 0, z: 0, sx: 1, sy: 1, sz: 1, yaw: 0, tilt: 0.5, lean: 0, slot: 0 });
     expect(forward.z).toBeGreaterThan(0.4);
     expect(forward.y).toBeLessThan(0);
+    // Splaying a limb sideways tips the axis along the body's right, without
+    // moving it forward: this is what keeps arms out of the chest.
+    const splayed = limbAxis({ part: "armUpper", x: 0, y: 0, z: 0, sx: 1, sy: 1, sz: 1, yaw: 0, tilt: 0, lean: 0.3, slot: 0 });
+    expect(splayed.x).toBeGreaterThan(0.25);
+    expect(Math.abs(splayed.z)).toBeLessThan(1e-6);
+    // The body's right turns with it: a quarter turn to +X puts the right-hand
+    // side along -Z, so the same arm splays that way instead.
+    const turned = limbAxis({ part: "armUpper", x: 0, y: 0, z: 0, sx: 1, sy: 1, sz: 1, yaw: Math.PI / 2, tilt: 0, lean: 0.3, slot: 0 });
+    expect(turned.z).toBeLessThan(-0.25);
+    expect(Math.abs(turned.x)).toBeLessThan(1e-6);
   });
 });
 

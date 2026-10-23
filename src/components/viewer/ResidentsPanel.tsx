@@ -38,7 +38,7 @@ export function ResidentsPanel({ open, onClose }: ResidentsPanelProps) {
   const problems = [
     ...(snapshot.navFailures > 0 ? [`${snapshot.navFailures} navigation failure(s)`] : []),
     ...(snapshot.created === 0 ? ["no residents created"] : []),
-    ...(snapshot.created > 0 && snapshot.added === 0 ? ["no residents added to the scene"] : []),
+    ...(snapshot.created > 0 && snapshot.instances === 0 ? ["no instances written to the GPU buffers"] : []),
     ...snapshot.errors,
   ];
 
@@ -81,16 +81,24 @@ export function ResidentsPanel({ open, onClose }: ResidentsPanelProps) {
       </div>
 
       <dl className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-0.5">
-        <Row label="created" value={snapshot.created} />
-        <Row label="added to scene" value={snapshot.added} />
-        <Row label="visible (frustum)" value={snapshot.visible} />
+        <Row label="created (simulation)" value={snapshot.created} />
+        <Row label="instances in GPU buffers" value={snapshot.instances} />
+        <Row label="bodies in camera frustum" value={snapshot.inFrustum} />
+        <Row label="scene draw calls" value={snapshot.sceneDrawCalls} />
         <Row label="walking" value={snapshot.walking} />
         <Row label="pausing" value={snapshot.pausing} />
         <Row label="interacting" value={snapshot.interacting} />
         <Row label="conversations" value={`${snapshot.conversationsStarted} started · ${snapshot.conversationsEnded} ended`} />
         <Row label="navigation failures" value={snapshot.navFailures} warn={snapshot.navFailures > 0} />
+        <Row label="unreachable meetings" value={snapshot.unreachableMeetings} warn={snapshot.unreachableMeetings > 0} />
+        <Row label="stuck walkers recovered" value={snapshot.stuckRecoveries} />
         <Row label="simulation" value={snapshot.running ? "running" : "paused"} />
       </dl>
+      <p className="mt-1 text-[0.55rem] leading-relaxed text-ink-400">
+        Frustum uses the live camera matrix; occlusion by houses is not tested.
+        The network is split in two where the outer walk crosses a plot, so some
+        meetings are genuinely unreachable.
+      </p>
 
       <div className="mt-2 flex items-center justify-between border-t border-ink-900/10 pt-1.5 text-[0.6rem] uppercase tracking-[0.12em] text-ink-500">
         <span className="flex items-center gap-1">
