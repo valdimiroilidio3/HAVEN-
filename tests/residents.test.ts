@@ -308,6 +308,21 @@ describe("conversations", () => {
     expect(checked).toBeGreaterThan(0);
   });
 
+  it("never starts two people inside each other", () => {
+    for (const seed of [1, 7, 20260214, 99, 12345]) {
+      const sim = createResidentSim(buildResidentWorld(entries), { count: 20, seed });
+      for (let i = 0; i < sim.residents.length; i += 1) {
+        for (let j = i + 1; j < sim.residents.length; j += 1) {
+          const a = sim.residents[i]!;
+          const b = sim.residents[j]!;
+          const gap = Math.hypot(a.x - b.x, a.z - b.z);
+          // 0.85 m is the deliberate side-by-side offset of the couple.
+          expect(gap, `${a.id} and ${b.id} overlap at spawn (seed ${seed})`).toBeGreaterThan(0.8);
+        }
+      }
+    }
+  });
+
   it("gestures while talking, and stops when the conversation ends", () => {
     const sim = createResidentSim(buildResidentWorld(entries), { count: 20 });
     // Measure the swing, not an absolute angle: what matters is that the hands

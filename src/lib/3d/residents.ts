@@ -204,6 +204,39 @@ function mulberry32(seed: number): () => number {
  * Node kinds are kept so the population can be distributed by *place* — the ring
  * path, the boulevard, the lagoon deck — rather than by arbitrary coordinates.
  */
+/**
+ * Spread the spawn points out.
+ *
+ * Each activity group picks its nodes with a spacing of its own, so two groups
+ * could still choose neighbouring nodes and start two people 12 cm apart. A
+ * quiet start matters: the first frame the visitor sees should not be two bodies
+ * intersecting. Anyone too close moves to the nearest node that is clear, always
+ * on the pedestrian network.
+ */
+function declutterSpawns(world: ResidentWorld, residents: Resident[], minGap: number): void {
+  const placed: Array<{ x: number; z: number }> = [];
+  for (const resident of residents) {
+    const clear = (x: number, z: number) => placed.every((other) => Math.hypot(other.x - x, other.z - z) >= minGap);
+    if (clear(resident.x, resident.z)) {
+      placed.push({ x: resident.x, z: resident.z });
+      continue;
+    }
+    let best = { node: resident.fromNode, distance: Infinity };
+    for (let node = 0; node < world.nodes.length; node += 1) {
+      const point = world.nodes[node]!;
+      if (!clear(point.x, point.z)) continue;
+      const distance = Math.hypot(point.x - resident.x, point.z - resident.z);
+      if (distance < best.distance) best = { node, distance };
+    }
+    const point = world.nodes[best.node]!;
+    resident.x = point.x;
+    resident.z = point.z;
+    resident.fromNode = best.node;
+    resident.homeComponent = world.component[best.node] ?? 0;
+    placed.push({ x: point.x, z: point.z });
+  }
+}
+
 export function buildResidentWorld(entries: ResidentEntry[]): ResidentWorld {
   const paths = footpaths(
     entries.map((entry) => ({
@@ -553,6 +586,10 @@ export function createResidentSim(world: ResidentWorld, options: { count?: numbe
       random,
     );
   }
+
+  // --- a quiet start ------------------------------------------------------
+  // Nothing may begin inside another body, whatever the seed picked.
+  declutterSpawns(world, residents, 1.15);
 
   // --- companions ---------------------------------------------------------
   // Two people walking together share a route, offset to either side.

@@ -1031,6 +1031,10 @@ plantada, joelho de balanço fletido, braços em oposição) completa o conjunto
   rasterizador e o renderer usam-na.
 - **Ombros:** uma segunda instância de `chest` dá a linha dos ombros, sem a qual o
   casaco era um ovo e os braços flutuavam ao lado.
+- **Arranque limpo:** `declutterSpawns()` verifica, no fim da construção da
+  população, se dois corpos nascem a menos de 1,15 m e muda o que estiver a mais
+  para o nó livre mais próximo — sempre na rede. O par de acompanhantes fica a
+  0,85 m de propósito (lado a lado).
 - **Variação:** altura (1,60–1,93 m), largura de ombros, amplitude de passada,
   cinco tons de pele, cinco de cabelo, oito de camisa, cinco de calças e três
   estilos de cabelo (curto, comprido, calvo). **Geometria**, não expressão facial.
