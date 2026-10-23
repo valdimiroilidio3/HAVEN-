@@ -16,7 +16,7 @@ import { BODY_INSTANCES, createBodyBuffer, fillBody } from "../src/lib/3d/reside
 const entries = SEED_UNITS.map((unit) => ({
   code: unit.code,
   position: { x: unit.position.x, z: unit.position.z },
-  rotationY: unit.position.rotationY,
+  rotationY: (unit.position.rotationY * Math.PI) / 180,
   typology: unit.typology,
 }));
 

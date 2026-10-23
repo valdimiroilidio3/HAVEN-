@@ -9,13 +9,21 @@
  *
  *   npx tsx scripts/render-residents.ts
  *
- * Writes docs/residents-overview.png and docs/residents-closeup.png.
+ * Writes docs/residents-*.png and docs/site-three-quarter.png. The site view
+ * also draws the real house geometry (`buildHouseGeometry`, triangle for
+ * triangle) so placement, height and ground contact can be judged together with
+ * the population.
  */
 import { deflateSync } from "node:zlib";
 import { writeFileSync } from "node:fs";
 import { SEED_UNITS } from "../src/lib/domain/inventory";
 import { footpaths } from "../src/lib/3d/circulation";
 import { SITE } from "../src/lib/3d/site";
+import { getFloorPlan } from "../src/lib/domain/floorplans";
+import { HOUSE_CONFIG, buildHouseGeometry, type HouseGeometrySet } from "../src/components/three/house-geometry";
+import { buildPlotGeometries } from "../src/components/three/site/plot-geometry";
+import { buildLagoonGeometries } from "../src/components/three/site/lagoon-geometry";
+import { garagePlan, plotRearDepth, plotWallsFor, poolFor } from "../src/lib/3d/site";
 import {
   RESIDENTS,
   buildResidentWorld,
@@ -29,7 +37,7 @@ type Vec3 = [number, number, number];
 const entries = SEED_UNITS.map((unit) => ({
   code: unit.code,
   position: { x: unit.position.x, z: unit.position.z },
-  rotationY: unit.position.rotationY,
+  rotationY: (unit.position.rotationY * Math.PI) / 180,
   typology: unit.typology,
 }));
 
@@ -275,6 +283,121 @@ function triangle(frame: Frame, a: Vec3, b: Vec3, c: Vec3, colour: Vec3): void {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * Houses — the real merged geometry, not boxes
+ * ------------------------------------------------------------------ */
+
+const HOUSE_COLOURS: Record<string, Vec3> = {
+  stone: [0.81, 0.78, 0.71],
+  render: [0.9, 0.89, 0.84],
+  concrete: [0.83, 0.8, 0.75],
+  timber: [0.66, 0.52, 0.38],
+  timberDark: [0.33, 0.25, 0.17],
+  charcoal: [0.14, 0.15, 0.12],
+  metal: [0.16, 0.17, 0.15],
+  glass: [0.14, 0.2, 0.2],
+  glassRail: [0.68, 0.74, 0.71],
+  deck: [0.69, 0.54, 0.38],
+  gravel: [0.8, 0.77, 0.7],
+  interior: [0.08, 0.08, 0.07],
+};
+
+function drawHouses(frame: Frame): void {
+  for (const unit of SEED_UNITS) {
+    const config = HOUSE_CONFIG[unit.typology];
+    if (!config) continue;
+    const plan = getFloorPlan(unit.typology);
+    const set: HouseGeometrySet = buildHouseGeometry(plan, config, Number(unit.code.replace(/\D/g, "")) || 1);
+    drawSet(frame, set, HOUSE_COLOURS, [0.75, 0.75, 0.72], unit.position.x, unit.position.z, unit.position.rotationY);
+  }
+}
+
+const PLOT_COLOURS: Record<string, Vec3> = {
+  render: [0.9, 0.89, 0.84],
+  stone: [0.81, 0.78, 0.71],
+  concrete: [0.83, 0.8, 0.75],
+  timber: [0.66, 0.52, 0.38],
+  timberDark: [0.33, 0.25, 0.17],
+  charcoal: [0.14, 0.15, 0.12],
+  metal: [0.16, 0.17, 0.15],
+  white: [0.94, 0.93, 0.9],
+  deck: [0.69, 0.54, 0.38],
+  poolTile: [0.72, 0.78, 0.76],
+  water: [0.18, 0.42, 0.46],
+  glass: [0.14, 0.2, 0.2],
+  hedge: [0.3, 0.37, 0.23],
+  trunk: [0.36, 0.29, 0.21],
+  foliage0: [0.36, 0.47, 0.26],
+  foliage1: [0.42, 0.53, 0.29],
+  foliage2: [0.31, 0.42, 0.24],
+  carPaint0: [0.45, 0.11, 0.12],
+  carPaint1: [0.12, 0.13, 0.15],
+  carPaint2: [0.55, 0.56, 0.54],
+  carGlass: [0.1, 0.13, 0.14],
+};
+
+/** Draw a geometry set in the local frame of a house or a plot. */
+function drawSet(
+  frame: Frame,
+  set: Partial<Record<string, import("three").BufferGeometry>>,
+  colours: Record<string, Vec3>,
+  fallback: Vec3,
+  originX: number,
+  originZ: number,
+  yawDegrees: number,
+): void {
+  const yaw = (yawDegrees * Math.PI) / 180;
+  const cos = Math.cos(yaw);
+  const sin = Math.sin(yaw);
+  for (const [key, geometry] of Object.entries(set)) {
+    if (!geometry) continue;
+    const colour = colours[key] ?? fallback;
+    const position = geometry.getAttribute("position");
+    const index = geometry.getIndex();
+    const count = index ? index.count : position.count;
+    for (let i = 0; i < count; i += 3) {
+      const ia = index ? index.getX(i) : i;
+      const ib = index ? index.getX(i + 1) : i + 1;
+      const ic = index ? index.getX(i + 2) : i + 2;
+      const toWorld = (vertex: number): Vec3 => {
+        const lx = position.getX(vertex);
+        const ly = position.getY(vertex);
+        const lz = position.getZ(vertex);
+        return [originX + lx * cos + lz * sin, ly, originZ - lx * sin + lz * cos];
+      };
+      triangle(frame, toWorld(ia), toWorld(ib), toWorld(ic), colour);
+    }
+  }
+}
+
+/** Plot walls, carport, pool, planting: the same parts the scene merges. */
+function drawPlots(frame: Frame): void {
+  for (const unit of SEED_UNITS) {
+    const code = unit.code;
+    const typology = unit.typology;
+    const seed = Number(code.replace(/\D/g, "")) || 1;
+    const rearDepth = plotRearDepth(unit.position, unit.position.rotationY, typology);
+    const { garage } = garagePlan(unit.position, unit.position.rotationY, typology);
+    const pool = poolFor(code, typology, rearDepth);
+    const { geometries } = buildPlotGeometries({
+      code,
+      rearDepth,
+      walls: plotWallsFor(typology, rearDepth),
+      garage,
+      pool,
+      seed,
+      lowQuality: true,
+    });
+    drawSet(frame, geometries, PLOT_COLOURS, [0.78, 0.76, 0.72], unit.position.x, unit.position.z, unit.position.rotationY);
+  }
+}
+
+/** The pool, deck and pavilion at the middle of the condominium. */
+function drawLagoon(frame: Frame): void {
+  const { geometries } = buildLagoonGeometries({ lowQuality: true });
+  drawSet(frame, geometries, PLOT_COLOURS, [0.7, 0.72, 0.7], SITE.lagoon.x, SITE.lagoon.z, 0);
+}
+
 function drawResidents(frame: Frame, only?: typeof sim.residents): void {
   for (const resident of only ?? sim.residents) {
     fillBody(resident, body);
@@ -426,9 +549,44 @@ function writePng(path: string, frame: Frame): void {
 // 1. The whole site, from the viewer's default camera.
 const overview = makeFrame([62, 52, 88], [SITE.center.x, 0, SITE.center.z], 1400, 900, 36);
 drawGround(overview);
+drawLagoon(overview);
+drawPlots(overview);
+drawHouses(overview);
 drawScaleReferences(overview);
 drawResidents(overview);
 writePng("docs/residents-overview.png", overview);
+
+// 1b. A three-quarter view over the houses and the people together: the same
+//     geometry the scene draws, so placement and ground contact can be judged.
+const quarter = makeFrame(
+  [SITE.center.x + 26, 13, SITE.center.z + 44],
+  [SITE.center.x + 6, 2.4, SITE.center.z + 8],
+  1400,
+  900,
+  46,
+);
+drawGround(quarter);
+drawLagoon(quarter);
+drawPlots(quarter);
+drawHouses(quarter);
+drawResidents(quarter);
+writePng("docs/site-three-quarter.png", quarter);
+
+// 1c. One residence and its plot, close enough to judge walls, carport, pool,
+//     roofline and ground contact.
+const hero = SEED_UNITS[0]!;
+const heroFrame = makeFrame(
+  [hero.position.x + 13, 6.5, hero.position.z + 15],
+  [hero.position.x, 2.6, hero.position.z],
+  1200,
+  900,
+  46,
+);
+drawGround(heroFrame);
+drawPlots(heroFrame);
+drawHouses(heroFrame);
+drawResidents(heroFrame);
+writePng("docs/site-house.png", heroFrame);
 
 // 2. A close-up of the pair, from the side, so it is plain whether they are
 //    facing each other and at what distance.

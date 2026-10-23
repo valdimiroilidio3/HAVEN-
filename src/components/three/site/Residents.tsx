@@ -27,6 +27,7 @@ import {
   fillBody,
   instanceSlot,
   limbAxis,
+  residentAtInstance,
   type BodyPartName,
 } from "@/lib/3d/resident-skeleton";
 import {
@@ -57,7 +58,9 @@ export function Residents({ count = RESIDENTS.defaultCount }: { count?: number }
       SEED_UNITS.map((unit) => ({
         code: unit.code,
         position: { x: unit.position.x, z: unit.position.z },
-        rotationY: unit.position.rotationY,
+        // The inventory stores degrees (the house groups rotate by deg→rad);
+        // a resident's facing is radians.
+        rotationY: (unit.position.rotationY * Math.PI) / 180,
         typology: unit.typology,
       })),
     [],
@@ -262,10 +265,13 @@ export function Residents({ count = RESIDENTS.defaultCount }: { count?: number }
   });
 
   // Clicking a body selects it, so the panel can report its state and destination.
+  // The pick target is the chest, which is two instances per body (jacket and
+  // shoulder line), so the instance index has to be divided — setting the raw
+  // index selected the wrong person.
   const onPick = (event: ThreeEvent<MouseEvent>) => {
     event.stopPropagation();
     if (event.instanceId === undefined) return;
-    setResidentSelection(event.instanceId);
+    setResidentSelection(residentAtInstance("chest", event.instanceId));
   };
 
   return (

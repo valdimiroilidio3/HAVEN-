@@ -15,6 +15,7 @@ import {
   PART_COLOUR,
   createBodyBuffer,
   fillBody,
+  residentAtInstance,
   instanceSlot,
   limbAxis,
 } from "@/lib/3d/resident-skeleton";
@@ -254,6 +255,16 @@ describe("the body", () => {
     // And the buffer is exactly as large as the population needs.
     expect(instanceSlot(count - 1, "armUpper", 1)).toBe(count * 2 - 1);
     expect(instanceSlot(count - 1, "head", 2)).toBe(count * 3 - 1);
+  });
+
+  it("maps a clicked instance back to the right person", () => {
+    // The chest holds two instances per body, so instance 6 is resident 3.
+    expect(residentAtInstance("chest", 0)).toBe(0);
+    expect(residentAtInstance("chest", 1)).toBe(0);
+    expect(residentAtInstance("chest", 6)).toBe(3);
+    // Parts with a single instance per body map straight through.
+    expect(residentAtInstance("hips", 7)).toBe(7);
+    expect(residentAtInstance("hand", 9)).toBe(4);
   });
 
   it("points limb cylinders along their own axis", () => {

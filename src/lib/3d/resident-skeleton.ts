@@ -140,6 +140,17 @@ export function instanceSlot(residentIndex: number, part: BodyPartName, partSlot
 /** One transform per part instance: 18 per body. */
 export const BODY_INSTANCES = BODY_PARTS.reduce((total, part) => total + BODY_PART_COUNT[part], 0);
 
+/**
+ * Which resident a picked instance belongs to.
+ *
+ * A part can hold several instances per body (two hands, two chest pieces), so
+ * the raw instance index is not the resident index. Clicking the chest of the
+ * third person returns instance 4 and must select resident 2.
+ */
+export function residentAtInstance(part: BodyPartName, instanceId: number): number {
+  return Math.floor(instanceId / BODY_PART_COUNT[part]);
+}
+
 export function createBodyBuffer(): BodyTransform[] {
   const buffer: BodyTransform[] = [];
   for (const part of BODY_PARTS) {
